@@ -211,9 +211,9 @@ if run_btn:
             subway_df = fetch_kakao_subway(geo["lat"], geo["lng"], kakao_api_key, radius=search_radius)
             bld_data = fetch_building_hub(geo, data_go_key)
             tour_df = fetch_tour_api_poi(geo["lat"], geo["lng"], search_radius, data_go_key)
-            mois_df = fetch_mois_tourist_lodging(geo["lat"], geo["lng"], search_radius, data_go_key)
             sigungu_tokens = [tok for tok in str(geo.get("address_name", "")).split() if tok.endswith(("구", "시", "군"))]
             sigungu_name = next((t for t in sigungu_tokens if t.endswith("구")), sigungu_tokens[0] if sigungu_tokens else "")
+            mois_df = fetch_mois_tourist_lodging(geo["lat"], geo["lng"], search_radius, data_go_key, sigungu_name=sigungu_name)
             mois_gen_df = fetch_mois_general_lodging(geo["lat"], geo["lng"], search_radius, data_go_key, sigungu_name=sigungu_name)
             kakao_lodging_df = fetch_kakao_lodging(geo["lat"], geo["lng"], kakao_api_key, radius=search_radius)
             kakao_lodging_df = enrich_lodging_building_info(kakao_lodging_df, kakao_api_key, data_go_key, limit=15)
@@ -363,34 +363,54 @@ else:
             st.markdown("#### 반경 내 숙박업소 목록 (Comp Set 후보 발굴용)")
             sub_b, sub_a = st.tabs(["카카오 로컬 전체 숙박(AD5)", "행안부 인허가 전체 (관광+일반숙박)"])
 
+            def _norm_addr(raw: str) -> str:
+                s = str(raw or "").split(",")[0].split("(")[0].strip()
+                for full, short in [("서울특별시", "서울"), ("부산광역시", "부산"), ("대구광역시", "대구"), ("인천광역시", "인천"), ("광주광역시", "광주"), ("대전광역시", "대전"), ("울산광역시", "울산")]:
+                    s = s.replace(full, short)
+                return s.replace(" ", "").lower()
+
             mois_all_df = pd.concat([d for d in (mois_df, mois_gen_df) if not d.empty], ignore_index=True) if (not mois_df.empty or not mois_gen_df.empty) else pd.DataFrame()
             mois_meta_map = {}
             mois_addr_map = {}
+            mois_records = []
             if not mois_all_df.empty:
                 for _, mr in mois_all_df.iterrows():
                     meta = {
                         "영업시작일": mr.get("영업시작일", ""),
                         "객실수(실)": mr.get("객실수(실)"),
+                        "lat": mr.get("lat"),
+                        "lng": mr.get("lng"),
                     }
+                    mois_records.append(meta)
                     norm_n = str(mr["사업장명"]).replace(" ", "").lower()
                     if norm_n:
                         mois_meta_map[norm_n] = meta
-                    raw_addr = str(mr.get("도로명주소", "")).split(",")[0].split("(")[0].strip().replace(" ", "").lower()
+                    raw_addr = _norm_addr(mr.get("도로명주소", ""))
                     if raw_addr:
                         mois_addr_map[raw_addr] = meta
 
             with sub_b:
                 if not kakao_lodging_df.empty:
+                    from api_clients import haversine_m
                     k_disp = kakao_lodging_df.copy()
                     matched_dates, matched_rooms = [], []
                     for _, kr in k_disp.iterrows():
                         kn = str(kr["업소명"]).replace(" ", "").lower()
-                        ka = str(kr["주소"]).split(",")[0].split("(")[0].strip().replace(" ", "").lower()
+                        ka = _norm_addr(kr["주소"])
                         found = mois_meta_map.get(kn)
                         if not found:
                             found = next((v for mk, v in mois_meta_map.items() if mk and (mk in kn or kn in mk)), None)
                         if not found and ka:
-                            found = next((v for ma, v in mois_addr_map.items() if ka in ma or ma in ka), None)
+                            found = mois_addr_map.get(ka) or next((v for ma, v in mois_addr_map.items() if ka in ma or ma in ka), None)
+                        if not found and mois_records:
+                            klat, klng = float(kr["lat"]), float(kr["lng"])
+                            closest = min(
+                                (m for m in mois_records if m.get("lat") and m.get("lng")),
+                                key=lambda m: haversine_m(klat, klng, float(m["lat"]), float(m["lng"])),
+                                default=None,
+                            )
+                            if closest and haversine_m(klat, klng, float(closest["lat"]), float(closest["lng"])) <= 35:
+                                found = closest
                         matched_dates.append((found["영업시작일"] or "-") if found else "-")
                         r_cnt = found.get("객실수(실)") if found else None
                         matched_rooms.append(f"{int(r_cnt)}실" if pd.notna(r_cnt) and r_cnt else "-")

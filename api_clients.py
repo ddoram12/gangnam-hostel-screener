@@ -335,7 +335,9 @@ def fetch_tour_api_poi(lat: float, lng: float, radius: int, data_key: str) -> pd
 
 
 @st.cache_data(ttl=3600)
-def fetch_mois_tourist_lodging(lat: float, lng: float, radius: int, data_key: str, max_pages: int = 10) -> pd.DataFrame:
+def fetch_mois_tourist_lodging(
+    lat: float, lng: float, radius: int, data_key: str, sigungu_name: str = "", max_pages: int = 5
+) -> pd.DataFrame:
     """행정안전부 관광숙박업 인허가 데이터를 조회해 반경 내 영업 중 업소를 필터링합니다."""
     url = "https://apis.data.go.kr/1741000/tourist_accommodations/info"
     key = normalize_service_key(data_key)
@@ -343,6 +345,8 @@ def fetch_mois_tourist_lodging(lat: float, lng: float, radius: int, data_key: st
     matched = []
     for page in range(1, max_pages + 1):
         params = {"serviceKey": key, "pageNo": page, "numOfRows": 1000, "returnType": "json"}
+        if sigungu_name:
+            params["cond[ROAD_NM_ADDR::LIKE]"] = sigungu_name
         try:
             r = requests.get(url, params=params, timeout=15)
             r.raise_for_status()
