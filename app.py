@@ -11,6 +11,7 @@ from streamlit_folium import st_folium
 from api_clients import (
     check_school_zone_kakao,
     fetch_building_hub,
+    fetch_google_hotel_summary,
     fetch_kakao_lodging,
     fetch_kakao_subway,
     fetch_mois_tourist_lodging,
@@ -352,17 +353,138 @@ else:
                 st.dataframe(poi_non_lodging[["명칭", "카테고리", "거리(m)", "주소"]], width="stretch", hide_index=True, height=280)
         with col_t2:
             st.markdown("#### 반경 내 숙박업소 목록 (Comp Set 후보 발굴용)")
-            sub_a, sub_b = st.tabs(["행안부 관광숙박업 인허가", "카카오 로컬 전체 숙박(AD5)"])
+            sub_a, sub_b = st.tabs(["행안부 관광숙박업 인허가 (영업시작일·객실수)", "카카오 로컬 전체 숙박(AD5)"])
+
+            mois_meta_map = {}
+            if not mois_df.empty:
+                for _, mr in mois_df.iterrows():
+                    norm_n = str(mr["사업장명"]).replace(" ", "").lower()
+                    mois_meta_map[norm_n] = {
+                        "영업시작일": mr.get("영업시작일", ""),
+                        "객실수(실)": mr.get("객실수(실)"),
+                    }
+
             with sub_a:
                 if not mois_df.empty:
-                    st.dataframe(mois_df[["사업장명", "업태구분", "인허가일자", "거리(m)", "도로명주소"]], width="stretch", hide_index=True, height=380)
+                    mois_cols = [c for c in ["사업장명", "업태구분", "영업시작일", "객실수(실)", "시설면적(㎡)", "총층수", "거리(m)", "도로명주소"] if c in mois_df.columns]
+                    st.dataframe(mois_df[mois_cols], width="stretch", hide_index=True, height=300)
                 else:
                     st.info("반경 내 행안부 인허가 관광숙박업 조회 결과가 없습니다.")
+
             with sub_b:
                 if not kakao_lodging_df.empty:
-                    st.dataframe(kakao_lodging_df[["업소명", "세부분류", "거리(m)", "주소"]], width="stretch", hide_index=True, height=380)
+                    k_disp = kakao_lodging_df.copy()
+                    matched_dates, matched_rooms = [], []
+                    for _, kr in k_disp.iterrows():
+                        kn = str(kr["업소명"]).replace(" ", "").lower()
+                        found = mois_meta_map.get(kn)
+                        if not found:
+                            found = next((v for mk, v in mois_meta_map.items() if mk and (mk in kn or kn in mk)), None)
+                        matched_dates.append(found["영업시작일"] if found else "")
+                        matched_rooms.append(found["객실수(실)"] if found else None)
+                    k_disp["영업시작일(인허가)"] = matched_dates
+                    k_disp["객실수(실)"] = matched_rooms
+                    st.dataframe(
+                        k_disp[["업소명", "세부분류", "거리(m)", "영업시작일(인허가)", "객실수(실)", "주소"]],
+                        width="stretch",
+                        hide_index=True,
+                        height=300,
+                    )
                 else:
                     st.info("반경 내 카카오 로컬 숙박업소 조회 결과가 없습니다.")
+
+            # Comp Set 후보 선택 -> OTA 평점 조회 & 4번 탭 바로 등록
+            st.markdown("##### 🎯 Comp Set 후보 OTA 평점 확인 및 4번 탭 바로 등록")
+            cand_list = []
+            if not mois_df.empty:
+                cand_list.extend(mois_df["사업장명"].dropna().tolist())
+            if not kakao_lodging_df.empty:
+                cand_list.extend(kakao_lodging_df["업소명"].dropna().tolist())
+            cand_options = list(dict.fromkeys([c.strip() for c in cand_list if str(c).strip()]))
+
+            if cand_options:
+                selected_cands = st.multiselect(
+                    "비교/등록할 숙소를 선택하세요 (1~5곳 권장)",
+                    options=cand_options,
+                    key="tab2_comp_candidates",
+                )
+                btn_c1, btn_c2 = st.columns(2)
+                check_ota_btn = btn_c1.button("🌐 선택 숙소 글로벌 OTA 평점 조회", width="stretch", key="btn_check_ota")
+                reg_comp_btn = btn_c2.button("➕ 4번 Comp Set에 바로 등록", type="primary", width="stretch", key="btn_reg_comp")
+
+                if check_ota_btn:
+                    if not selected_cands:
+                        st.warning("조회할 숙소를 먼저 선택해 주세요.")
+                    elif not serpapi_key:
+                        st.error("SerpApi 키가 설정되지 않았습니다. 로컬 `.env` 또는 클라우드 `Secrets` 설정을 확인해 주세요.")
+                    else:
+                        ota_rows = []
+                        ota_cache = st.session_state.setdefault("ota_summary_cache", {})
+                        with st.spinner("Google Hotels에서 글로벌 OTA 평점·리뷰·참고가를 조회 중입니다..."):
+                            for name in selected_cands:
+                                try:
+                                    info = fetch_google_hotel_summary(name, serpapi_key)
+                                    ota_cache[name] = info
+                                    ota_rows.append({
+                                        "선택숙소": name,
+                                        "구글매칭명": info["resolved_title"],
+                                        "OTA평점": f"⭐ {info['rating']}" if info["rating"] else "-",
+                                        "리뷰수": f"{int(info['reviews']):,}" if info["reviews"] else "-",
+                                        "성급": f"{info['hotel_class']}성" if info["hotel_class"] else "-",
+                                        "참고1박가(원)": f"{int(info['sample_rate']):,}" if info["sample_rate"] else "-",
+                                    })
+                                except Exception as e:
+                                    ota_rows.append({
+                                        "선택숙소": name,
+                                        "구글매칭명": f"조회실패({e})",
+                                        "OTA평점": "-",
+                                        "리뷰수": "-",
+                                        "성급": "-",
+                                        "참고1박가(원)": "-",
+                                    })
+                        st.session_state["tab2_ota_preview"] = pd.DataFrame(ota_rows)
+
+                if "tab2_ota_preview" in st.session_state and not st.session_state["tab2_ota_preview"].empty:
+                    st.dataframe(st.session_state["tab2_ota_preview"], width="stretch", hide_index=True)
+
+                if reg_comp_btn:
+                    if not selected_cands:
+                        st.warning("등록할 숙소를 먼저 선택해 주세요.")
+                    elif not serpapi_key:
+                        st.error("SerpApi 키가 설정되지 않았습니다. 로컬 `.env` 또는 클라우드 `Secrets` 설정을 확인해 주세요.")
+                    else:
+                        ota_cache = st.session_state.setdefault("ota_summary_cache", {})
+                        ok_cnt, fail_msgs = 0, []
+                        with st.spinner("선택한 숙소를 4번 Comp Set에 등록 중입니다..."):
+                            for name in selected_cands:
+                                try:
+                                    info = ota_cache.get(name) or fetch_google_hotel_summary(name, serpapi_key)
+                                    ota_cache[name] = info
+                                    note_parts = []
+                                    norm_n = name.replace(" ", "").lower()
+                                    m_meta = mois_meta_map.get(norm_n)
+                                    if m_meta:
+                                        if m_meta.get("영업시작일"):
+                                            note_parts.append(f"개업:{m_meta['영업시작일']}")
+                                        if m_meta.get("객실수(실)"):
+                                            note_parts.append(f"{m_meta['객실수(실)']}실")
+                                    if info.get("rating"):
+                                        note_parts.append(f"평점:{info['rating']}")
+                                    if info.get("reviews"):
+                                        note_parts.append(f"리뷰:{int(info['reviews']):,}")
+                                    upsert_comp_set_property(
+                                        name,
+                                        info["property_token"],
+                                        info["resolved_title"],
+                                        " / ".join(note_parts),
+                                    )
+                                    ok_cnt += 1
+                                except Exception as e:
+                                    fail_msgs.append(f"{name}: {e}")
+                        if ok_cnt > 0:
+                            st.success(f"✅ {ok_cnt}개 숙소가 4번 탭 [직접 경쟁군(Comp Set)]에 등록되었습니다! 상단 4번 탭에서 바로 가격 캘린더를 수집해 보세요.")
+                        for fm in fail_msgs:
+                            st.warning(f"⚠️ 등록 실패 - {fm}")
 
     # [TAB 3] 지도 시각화
     with tab3:

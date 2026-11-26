@@ -289,8 +289,14 @@ def fetch_mois_tourist_lodging(lat: float, lng: float, radius: int, data_key: st
                 break
             for it in items:
                 row = {k.upper(): v for k, v in it.items()}
-                status = str(row.get("DTL_STAT_NM") or row.get("TRD_STATE_NM") or "")
-                if any(x in status for x in ["폐업", "취소", "말소"]):
+                status = str(
+                    row.get("DTL_SALS_STTS_NM")
+                    or row.get("SALS_STTS_NM")
+                    or row.get("DTL_STAT_NM")
+                    or row.get("TRD_STATE_NM")
+                    or ""
+                )
+                if any(x in status for x in ["폐업", "취소", "말소", "휴업"]):
                     continue
                 x_raw = row.get("X") or row.get("CRD_INFO_X")
                 y_raw = row.get("Y") or row.get("CRD_INFO_Y")
@@ -302,12 +308,31 @@ def fetch_mois_tourist_lodging(lat: float, lng: float, radius: int, data_key: st
                     continue
                 dist = haversine_m(lat, lng, t_lat, t_lng)
                 if dist <= radius:
+                    raw_rooms = row.get("GSRM_CNT")
+                    rooms_val = int(float(raw_rooms)) if raw_rooms not in (None, "", "0") else None
+                    raw_area = row.get("FCAR")
+                    area_val = round(float(raw_area), 1) if raw_area not in (None, "", "0") else None
+                    perm_date = str(row.get("LCPMT_YMD") or row.get("APV_PERM_YMD") or "").strip()
                     matched.append({
                         "사업장명": row.get("BPLC_NM", ""),
-                        "업태구분": row.get("CUL_PHY_ED_US_NM") or row.get("UPTAE_NM") or "관광숙박업",
+                        "업태구분": (
+                            row.get("TOUR_LDGBIZ_DTL_NM")
+                            or row.get("CUL_PHY_ED_US_NM")
+                            or row.get("UPTAE_NM")
+                            or "관광숙박업"
+                        ),
                         "영업상태": status or "영업",
-                        "인허가일자": str(row.get("APV_PERM_YMD", "")),
-                        "도로명주소": row.get("RDN_WHL_ADDR") or row.get("SITE_WHL_ADDR") or "",
+                        "영업시작일": perm_date,
+                        "객실수(실)": rooms_val,
+                        "시설면적(㎡)": area_val,
+                        "총층수": row.get("TOTAL_NOFL") or row.get("GRND_NOFL") or "",
+                        "도로명주소": (
+                            row.get("ROAD_NM_ADDR")
+                            or row.get("LOTNO_ADDR")
+                            or row.get("RDN_WHL_ADDR")
+                            or row.get("SITE_WHL_ADDR")
+                            or ""
+                        ),
                         "거리(m)": round(dist, 1),
                         "lat": t_lat,
                         "lng": t_lng,
@@ -320,8 +345,8 @@ def fetch_mois_tourist_lodging(lat: float, lng: float, radius: int, data_key: st
     return df.sort_values("거리(m)").reset_index(drop=True) if not df.empty else df
 
 
-def resolve_google_hotel_token(hotel_query: str, serpapi_key: str) -> tuple[str, str]:
-    """SerpApi Google Hotels에서 숙소명으로부터 property_token을 조회합니다."""
+def fetch_google_hotel_summary(hotel_query: str, serpapi_key: str) -> dict:
+    """SerpApi Google Hotels에서 숙소 토큰, 매칭명, 글로벌 OTA 평점/리뷰/성급/1박가를 조회합니다."""
     today = datetime.date.today()
     params = {
         "engine": "google_hotels",
@@ -338,18 +363,34 @@ def resolve_google_hotel_token(hotel_query: str, serpapi_key: str) -> tuple[str,
     resp.raise_for_status()
     data = resp.json()
 
-    if data.get("property_token"):
-        return data["property_token"], data.get("name", hotel_query)
+    target = data if data.get("property_token") else None
+    if target is None:
+        props = data.get("properties", [])
+        if not props:
+            raise ValueError(f"'{hotel_query}'에 해당하는 Google Hotels 등록 숙소를 찾지 못했습니다.")
+        target = props[0]
 
-    props = data.get("properties", [])
-    if not props:
-        raise ValueError(f"'{hotel_query}'에 해당하는 Google Hotels 등록 숙소를 찾지 못했습니다.")
-
-    top = props[0]
-    token = top.get("property_token")
+    token = target.get("property_token")
     if not token:
         raise ValueError(f"'{hotel_query}'의 property_token을 추출할 수 없습니다.")
-    return token, top.get("name", hotel_query)
+
+    rate_info = target.get("rate_per_night") or {}
+    rate_val = extract_nightly_price(rate_info) if isinstance(rate_info, dict) else None
+
+    return {
+        "property_token": token,
+        "resolved_title": target.get("name", hotel_query),
+        "rating": target.get("overall_rating"),
+        "reviews": target.get("reviews"),
+        "hotel_class": target.get("extracted_hotel_class") or target.get("hotel_class") or "",
+        "sample_rate": rate_val,
+    }
+
+
+def resolve_google_hotel_token(hotel_query: str, serpapi_key: str) -> tuple[str, str]:
+    """SerpApi Google Hotels에서 숙소명으로부터 property_token과 매칭명을 조회합니다."""
+    summary = fetch_google_hotel_summary(hotel_query, serpapi_key)
+    return summary["property_token"], summary["resolved_title"]
 
 
 def fetch_price_calendar_for_comp_set(
