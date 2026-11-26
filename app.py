@@ -212,7 +212,9 @@ if run_btn:
             bld_data = fetch_building_hub(geo, data_go_key)
             tour_df = fetch_tour_api_poi(geo["lat"], geo["lng"], search_radius, data_go_key)
             mois_df = fetch_mois_tourist_lodging(geo["lat"], geo["lng"], search_radius, data_go_key)
-            mois_gen_df = fetch_mois_general_lodging(geo["lat"], geo["lng"], search_radius, data_go_key)
+            sigungu_tokens = [tok for tok in str(geo.get("address_name", "")).split() if tok.endswith(("구", "시", "군"))]
+            sigungu_name = next((t for t in sigungu_tokens if t.endswith("구")), sigungu_tokens[0] if sigungu_tokens else "")
+            mois_gen_df = fetch_mois_general_lodging(geo["lat"], geo["lng"], search_radius, data_go_key, sigungu_name=sigungu_name)
             kakao_lodging_df = fetch_kakao_lodging(geo["lat"], geo["lng"], kakao_api_key, radius=search_radius)
             kakao_lodging_df = enrich_lodging_building_info(kakao_lodging_df, kakao_api_key, data_go_key, limit=15)
 
@@ -359,17 +361,23 @@ else:
                 st.dataframe(poi_non_lodging[["명칭", "카테고리", "거리(m)", "주소"]], width="stretch", hide_index=True, height=280)
         with col_t2:
             st.markdown("#### 반경 내 숙박업소 목록 (Comp Set 후보 발굴용)")
-            sub_b, sub_a = st.tabs(["카카오 로컬 전체 숙박(AD5 · 준공/규모)", "행안부 관광숙박업 인허가 (영업시작일·객실수)"])
+            sub_b, sub_a = st.tabs(["카카오 로컬 전체 숙박(AD5)", "행안부 인허가 전체 (관광+일반숙박)"])
 
+            mois_all_df = pd.concat([d for d in (mois_df, mois_gen_df) if not d.empty], ignore_index=True) if (not mois_df.empty or not mois_gen_df.empty) else pd.DataFrame()
             mois_meta_map = {}
-            for src_df in (mois_df, mois_gen_df):
-                if not src_df.empty:
-                    for _, mr in src_df.iterrows():
-                        norm_n = str(mr["사업장명"]).replace(" ", "").lower()
-                        mois_meta_map[norm_n] = {
-                            "영업시작일": mr.get("영업시작일", ""),
-                            "객실수(실)": mr.get("객실수(실)"),
-                        }
+            mois_addr_map = {}
+            if not mois_all_df.empty:
+                for _, mr in mois_all_df.iterrows():
+                    meta = {
+                        "영업시작일": mr.get("영업시작일", ""),
+                        "객실수(실)": mr.get("객실수(실)"),
+                    }
+                    norm_n = str(mr["사업장명"]).replace(" ", "").lower()
+                    if norm_n:
+                        mois_meta_map[norm_n] = meta
+                    raw_addr = str(mr.get("도로명주소", "")).split(",")[0].split("(")[0].strip().replace(" ", "").lower()
+                    if raw_addr:
+                        mois_addr_map[raw_addr] = meta
 
             with sub_b:
                 if not kakao_lodging_df.empty:
@@ -377,16 +385,19 @@ else:
                     matched_dates, matched_rooms = [], []
                     for _, kr in k_disp.iterrows():
                         kn = str(kr["업소명"]).replace(" ", "").lower()
+                        ka = str(kr["주소"]).split(",")[0].split("(")[0].strip().replace(" ", "").lower()
                         found = mois_meta_map.get(kn)
                         if not found:
                             found = next((v for mk, v in mois_meta_map.items() if mk and (mk in kn or kn in mk)), None)
+                        if not found and ka:
+                            found = next((v for ma, v in mois_addr_map.items() if ka in ma or ma in ka), None)
                         matched_dates.append((found["영업시작일"] or "-") if found else "-")
                         r_cnt = found.get("객실수(실)") if found else None
-                        matched_rooms.append(f"{r_cnt}실" if r_cnt else "-")
+                        matched_rooms.append(f"{int(r_cnt)}실" if pd.notna(r_cnt) and r_cnt else "-")
                     k_disp["영업시작일(인허가)"] = matched_dates
                     k_disp["객실수"] = matched_rooms
                     disp_cols = [
-                        c for c in ["업소명", "세부분류", "거리(m)", "준공년월", "건물규모", "영업시작일(인허가)", "객실수", "주소"]
+                        c for c in ["업소명", "세부분류", "거리(m)", "영업시작일(인허가)", "객실수", "준공년월", "건물규모", "주소"]
                         if c in k_disp.columns
                     ]
                     st.dataframe(
@@ -399,11 +410,12 @@ else:
                     st.info("반경 내 카카오 로컬 숙박업소 조회 결과가 없습니다.")
 
             with sub_a:
-                if not mois_df.empty:
-                    mois_cols = [c for c in ["사업장명", "업태구분", "영업시작일", "객실수(실)", "시설면적(㎡)", "총층수", "거리(m)", "도로명주소"] if c in mois_df.columns]
-                    st.dataframe(mois_df[mois_cols], width="stretch", hide_index=True, height=300)
+                if not mois_all_df.empty:
+                    mois_all_sorted = mois_all_df.sort_values("거리(m)").reset_index(drop=True)
+                    mois_cols = [c for c in ["사업장명", "업태구분", "영업시작일", "객실수(실)", "시설면적(㎡)", "총층수", "거리(m)", "도로명주소"] if c in mois_all_sorted.columns]
+                    st.dataframe(mois_all_sorted[mois_cols], width="stretch", hide_index=True, height=300)
                 else:
-                    st.info("반경 내 행안부 인허가 관광숙박업 조회 결과가 없습니다. (모텔·일반호텔 등은 '카카오 로컬 전체 숙박' 탭에서 준공년월과 건물규모를 확인하세요)")
+                    st.info("반경 내 행안부 인허가 숙박업소 조회 결과가 없습니다.")
 
             # Comp Set 후보 선택 -> OTA 평점 조회 & 4번 탭 바로 등록
             st.markdown("##### 🎯 Comp Set 후보 OTA 평점 확인 및 4번 탭 바로 등록")

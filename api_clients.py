@@ -414,7 +414,9 @@ def fetch_mois_tourist_lodging(lat: float, lng: float, radius: int, data_key: st
 
 
 @st.cache_data(ttl=3600)
-def fetch_mois_general_lodging(lat: float, lng: float, radius: int, data_key: str, max_pages: int = 10) -> pd.DataFrame:
+def fetch_mois_general_lodging(
+    lat: float, lng: float, radius: int, data_key: str, sigungu_name: str = "", max_pages: int = 5
+) -> pd.DataFrame:
     """행정안전부 일반 숙박업(lodgings) 인허가 데이터를 조회해 반경 내 영업 중 업소를 필터링합니다."""
     url = "https://apis.data.go.kr/1741000/lodgings/info"
     key = normalize_service_key(data_key)
@@ -422,6 +424,8 @@ def fetch_mois_general_lodging(lat: float, lng: float, radius: int, data_key: st
     matched = []
     for page in range(1, max_pages + 1):
         params = {"serviceKey": key, "pageNo": page, "numOfRows": 1000, "returnType": "json"}
+        if sigungu_name:
+            params["cond[ROAD_NM_ADDR::LIKE]"] = sigungu_name
         try:
             r = requests.get(url, params=params, timeout=15)
             if r.status_code != 200:
@@ -450,14 +454,14 @@ def fetch_mois_general_lodging(lat: float, lng: float, radius: int, data_key: st
                     continue
                 dist = haversine_m(lat, lng, t_lat, t_lng)
                 if dist <= radius:
-                    w_cnt = int(float(row.get("WEST_ROOM_CNT") or 0))
-                    k_cnt = int(float(row.get("KOR_ROOM_CNT") or 0))
+                    w_cnt = int(float(row.get("WSRM_CNT") or row.get("WEST_ROOM_CNT") or 0))
+                    k_cnt = int(float(row.get("KSRM_CNT") or row.get("KOR_ROOM_CNT") or 0))
                     g_cnt = int(float(row.get("GSRM_CNT") or 0))
                     total_rooms = g_cnt if g_cnt > 0 else (w_cnt + k_cnt if (w_cnt + k_cnt) > 0 else None)
                     perm_date = str(row.get("LCPMT_YMD") or row.get("APV_PERM_YMD") or "").strip()
                     matched.append({
                         "사업장명": row.get("BPLC_NM", ""),
-                        "업태구분": row.get("UPTAE_NM") or row.get("SANTN_UPTAE_NM") or "일반숙박업",
+                        "업태구분": row.get("BZSTAT_SE_NM") or row.get("UPTAE_NM") or "일반숙박업",
                         "영업상태": status or "영업",
                         "영업시작일": perm_date,
                         "객실수(실)": total_rooms,
