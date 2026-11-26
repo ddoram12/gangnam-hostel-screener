@@ -368,35 +368,80 @@ else:
     with tab3:
         st.subheader("후보 부지 중심 지하철역·학교보호구역·관광 POI·경쟁 숙박 분포 지도")
         st.caption("🔴 후보지 | 🟢 지하철역 | 🟠 반경 200m 학교 | 🔵 관광 POI | 🟣 행안부 관광숙박 | 🟡 카카오 숙박")
+
+        def make_popup(badge: str, title: str, sub: str = "", badge_color: str = "#2563EB") -> folium.Popup:
+            sub_html = f'<div style="font-size:12px;color:#64748B;margin-top:3px;">{sub}</div>' if sub else ""
+            html = (
+                f'<div style="min-width:180px;max-width:260px;font-family:sans-serif;line-height:1.4;">'
+                f'<span style="display:inline-block;background:{badge_color};color:#fff;font-size:11px;'
+                f'font-weight:700;padding:2px 7px;border-radius:10px;margin-bottom:4px;">{badge}</span>'
+                f'<div style="font-size:13px;font-weight:700;color:#0F172A;word-break:keep-all;">{title}</div>'
+                f'{sub_html}</div>'
+            )
+            return folium.Popup(html, max_width=280)
+
         m = folium.Map(location=[geo["lat"], geo["lng"]], zoom_start=15, tiles="OpenStreetMap")
         folium.Circle(location=[geo["lat"], geo["lng"]], radius=radius, color="#2563EB", fill=True, fill_opacity=0.06).add_to(m)
-        folium.Circle(location=[geo["lat"], geo["lng"]], radius=200, color="#DC2626", dash_array="5,5", fill=False, popup="학교 환경보호구역 체크 반경(200m)").add_to(m)
-        folium.Marker([geo["lat"], geo["lng"]], popup=f"<b>[후보지] {bld_name}</b>", icon=folium.Icon(color="red", icon="star")).add_to(m)
+        folium.Circle(
+            location=[geo["lat"], geo["lng"]],
+            radius=200,
+            color="#DC2626",
+            dash_array="5,5",
+            fill=False,
+            popup=make_popup("법규체크", "학교 환경보호구역 체크 반경", "반경 200m", "#DC2626"),
+        ).add_to(m)
+        folium.Marker(
+            [geo["lat"], geo["lng"]],
+            popup=make_popup("후보지", bld_name, geo["address_name"], "#DC2626"),
+            tooltip=f"[후보지] {bld_name}",
+            icon=folium.Icon(color="red", icon="star"),
+        ).add_to(m)
 
         if not subway_df.empty:
             for _, r in subway_df.iterrows():
                 folium.Marker(
                     [r["lat"], r["lng"]],
-                    popup=f"[지하철] {r['역명']} ({r['거리(m)']}m)",
+                    popup=make_popup("지하철", r["역명"], f"거리 {r['거리(m)']}m · 도보 약 {r['예상도보(분)']}분", "#16A34A"),
+                    tooltip=f"[지하철] {r['역명']} ({r['거리(m)']}m)",
                     icon=folium.Icon(color="green", icon="train", prefix="fa"),
                 ).add_to(m)
 
         for s in schools_200m:
             folium.Marker(
                 [float(s["y"]), float(s["x"])],
-                popup=f"[학교-200m내] {s['place_name']} ({s['distance']}m)",
+                popup=make_popup("학교(200m내)", s["place_name"], f"거리 {s['distance']}m", "#EA580C"),
+                tooltip=f"[학교] {s['place_name']} ({s['distance']}m)",
                 icon=folium.Icon(color="orange", icon="exclamation-sign"),
             ).add_to(m)
 
         if not poi_non_lodging.empty:
             for _, r in poi_non_lodging.head(80).iterrows():
-                folium.CircleMarker([r["lat"], r["lng"]], radius=5, color="#0284C7", fill=True, popup=f"[POI] {r['명칭']}").add_to(m)
+                folium.CircleMarker(
+                    [r["lat"], r["lng"]],
+                    radius=5,
+                    color="#0284C7",
+                    fill=True,
+                    popup=make_popup(r["카테고리"], r["명칭"], f"거리 {r['거리(m)']}m", "#0284C7"),
+                    tooltip=f"[{r['카테고리']}] {r['명칭']}",
+                ).add_to(m)
         if not mois_df.empty:
             for _, r in mois_df.iterrows():
-                folium.Marker([r["lat"], r["lng"]], popup=f"[관광숙박] {r['사업장명']}", icon=folium.Icon(color="purple", icon="bed", prefix="fa")).add_to(m)
+                folium.Marker(
+                    [r["lat"], r["lng"]],
+                    popup=make_popup("관광숙박업", r["사업장명"], f"{r['업태구분']} · {r['거리(m)']}m", "#9333EA"),
+                    tooltip=f"[관광숙박] {r['사업장명']}",
+                    icon=folium.Icon(color="purple", icon="bed", prefix="fa"),
+                ).add_to(m)
         if not kakao_lodging_df.empty:
             for _, r in kakao_lodging_df.iterrows():
-                folium.CircleMarker([r["lat"], r["lng"]], radius=6, color="#EA580C", fill=True, popup=f"[카카오] {r['업소명']}").add_to(m)
+                folium.CircleMarker(
+                    [r["lat"], r["lng"]],
+                    radius=6,
+                    color="#EA580C",
+                    fill=True,
+                    popup=make_popup("카카오 숙박", r["업소명"], f"{r['세부분류']} · {r['거리(m)']}m", "#EA580C"),
+                    tooltip=f"[카카오] {r['업소명']} ({r['거리(m)']}m)",
+                ).add_to(m)
         st_folium(m, width=1200, height=540, returned_objects=[])
 
 # ---------------------------------------------------------
