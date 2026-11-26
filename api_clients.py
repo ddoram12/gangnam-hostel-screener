@@ -2,6 +2,7 @@ import datetime
 import math
 import re
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 import requests
 import streamlit as st
@@ -213,6 +214,73 @@ def fetch_building_hub(geo: dict, data_key: str) -> dict:
             result[name] = []
             result[f"{name}_error"] = last_err
     return result
+
+
+def _fetch_single_lodging_building(addr: str, kakao_key: str, data_key: str) -> dict:
+    """단일 숙박업소 주소의 준공년월(사용승인일)과 건물 규모(층수·연면적)를 조회합니다."""
+    empty = {"준공년월": "-", "건물규모": "-", "건물용도": "-"}
+    if not addr or not str(addr).strip():
+        return empty
+    try:
+        geo = geocode_kakao(str(addr).strip(), kakao_key)
+        key = normalize_service_key(data_key)
+        params = {
+            "serviceKey": key,
+            "sigunguCd": geo["sigunguCd"],
+            "bjdongCd": geo["bjdongCd"],
+            "platGbCd": geo["platGbCd"],
+            "bun": geo["bun"],
+            "ji": geo["ji"],
+            "numOfRows": 10,
+            "pageNo": 1,
+            "_type": "json",
+        }
+        url = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
+        for _ in range(2):
+            try:
+                r = requests.get(url, params=params, timeout=10)
+                r.raise_for_status()
+                items = ensure_list(r.json().get("response", {}).get("body", {}).get("items", {}).get("item"))
+                if not items:
+                    return empty
+                t = items[0]
+                apr = str(t.get("useAprDay") or "").strip()
+                apr_fmt = f"{apr[:4]}-{apr[4:6]}" if len(apr) >= 6 and apr[:6].isdigit() else (apr or "-")
+                flr = t.get("grndFlrCnt") or "-"
+                area_sqm = float(t.get("totArea") or 0)
+                area_py = round(area_sqm * 0.3025) if area_sqm > 0 else 0
+                scale_str = f"{flr}층 · {area_py:,}평" if area_py > 0 else f"{flr}층"
+                purps = str(t.get("mainPurpsCdNm") or "-")
+                return {"준공년월": apr_fmt, "건물규모": scale_str, "건물용도": purps}
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return empty
+
+
+@st.cache_data(ttl=3600)
+def enrich_lodging_building_info(
+    lodging_df: pd.DataFrame, kakao_key: str, data_key: str, limit: int = 15
+) -> pd.DataFrame:
+    """카카오 숙박업소 목록의 상위 N개에 대해 건축물대장 준공년월과 건물규모를 병렬 조회해 채웁니다."""
+    if lodging_df.empty:
+        return lodging_df
+    df = lodging_df.copy().reset_index(drop=True)
+    target_indices = df.index[:limit].tolist()
+    addrs = [df.loc[i, "주소"] for i in target_indices]
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        results = list(executor.map(lambda a: _fetch_single_lodging_building(a, kakao_key, data_key), addrs))
+
+    df["준공년월"] = "-"
+    df["건물규모"] = "-"
+    df["건물용도"] = "-"
+    for idx, res in zip(target_indices, results):
+        df.loc[idx, "준공년월"] = res["준공년월"]
+        df.loc[idx, "건물규모"] = res["건물규모"]
+        df.loc[idx, "건물용도"] = res["건물용도"]
+    return df
 
 
 @st.cache_data(ttl=3600)
