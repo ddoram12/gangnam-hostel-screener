@@ -524,7 +524,8 @@ with tab5:
 
     default_py = 200.0
     if "analysis_result" in st.session_state:
-        area_val = float(st.session_state["analysis_result"]["bld_data"].get("title", [{}])[0].get("totArea") or 0)
+        titles_list = st.session_state["analysis_result"]["bld_data"].get("title") or []
+        area_val = float((titles_list[0].get("totArea") if titles_list else 0) or 0)
         if area_val > 0:
             default_py = round(area_val * 0.3025, 1)
 
