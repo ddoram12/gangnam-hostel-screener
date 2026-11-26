@@ -30,9 +30,84 @@ from db_manager import (
 load_dotenv()
 
 st.set_page_config(
-    page_title="강남 호스텔 임차 컨버전 입지·CompSet·수지 스크리너",
+    page_title="강남 호스텔 입지·CompSet·수지 스크리너",
+    page_icon="🏨",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
+
+st.markdown("""
+<style>
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2.5rem;
+    }
+    .hero-banner {
+        background: linear-gradient(135deg, #0F172A 0%, #1E3A8A 60%, #2563EB 100%);
+        padding: 1.5rem 2rem;
+        border-radius: 14px;
+        color: #FFFFFF;
+        margin-bottom: 1.25rem;
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+    }
+    .hero-banner h1 {
+        margin: 0;
+        font-size: 1.65rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: #FFFFFF;
+    }
+    .hero-banner p {
+        margin: 0.45rem 0 0 0;
+        font-size: 0.92rem;
+        color: #DBEAFE;
+    }
+    div[data-testid="stMetric"] {
+        background-color: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        padding: 0.9rem 1rem;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+    }
+    div[data-testid="stMetricLabel"] {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #475569;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 1.35rem;
+        font-weight: 700;
+        color: #0F172A;
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 6px;
+        border-bottom: 2px solid #E2E8F0;
+        padding-bottom: 2px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px 8px 0 0;
+        padding: 0.55rem 1rem;
+        font-weight: 600;
+        background-color: #F8FAFC;
+        border: 1px solid #E2E8F0;
+        border-bottom: none;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #EFF6FF !important;
+        color: #1D4ED8 !important;
+        border-color: #93C5FD !important;
+    }
+    .sidebar-brand {
+        background: #F1F5F9;
+        border-left: 4px solid #2563EB;
+        padding: 0.75rem 0.9rem;
+        border-radius: 0 8px 8px 0;
+        margin-bottom: 1rem;
+        font-size: 0.85rem;
+        color: #334155;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 init_db()
 
@@ -78,26 +153,20 @@ for k, v in SIM_DEFAULTS.items():
         st.session_state[k] = v
 
 # ---------------------------------------------------------
-# 2. 사이드바: API 키 및 강남권 후보지 설정
+# 2. API 키 내부 로드 및 사이드바(후보지·반경 설정)
 # ---------------------------------------------------------
-st.sidebar.header("1. API 키 설정")
-data_go_key = st.sidebar.text_input(
-    "공공데이터포털 인증키",
-    value=get_secret("DATA_GO_KR_KEY"),
-    type="password",
-)
-kakao_api_key = st.sidebar.text_input(
-    "카카오 REST API 키",
-    value=get_secret("KAKAO_REST_KEY"),
-    type="password",
-)
-serpapi_key = st.sidebar.text_input(
-    "SerpApi 키 (Comp Set ADR·OCC용)",
-    value=get_secret("SERPAPI_KEY"),
-    type="password",
-)
+data_go_key = get_secret("DATA_GO_KR_KEY")
+kakao_api_key = get_secret("KAKAO_REST_KEY")
+serpapi_key = get_secret("SERPAPI_KEY")
 
-st.sidebar.header("2. 강남권 후보 건물 및 분석 반경")
+st.sidebar.markdown("""
+<div class="sidebar-brand">
+    <b>🏨 강남 호스텔 시장조사</b><br>
+    임차 컨버전 입지·경쟁·수지 통합 분석
+</div>
+""", unsafe_allow_html=True)
+
+st.sidebar.header("📍 후보 건물 및 분석 반경")
 GANGNAM_PRESETS = {
     "직접 입력": "",
     "논현동 (신논현·강남역 상권)": "서울특별시 강남구 논현동 201-6",
@@ -115,17 +184,21 @@ search_radius = st.sidebar.select_slider(
     value=800,
 )
 
-run_btn = st.sidebar.button("입지 및 용도변경 스크리닝 실행", type="primary", width="stretch")
+run_btn = st.sidebar.button("🔍 입지 및 용도변경 스크리닝 실행", type="primary", width="stretch")
 
 # ---------------------------------------------------------
 # 3. 메인 화면 실행 로직
 # ---------------------------------------------------------
-st.title("강남 호스텔 임차 컨버전(용도변경) 입지·CompSet·수지 스크리너")
-st.caption("건축물대장 적격성 + 역세권·관광공사 POI + Comp Set 평일·주말 ADR·OCC 추적 + 객실 믹스 Payback 시뮬레이터")
+st.markdown("""
+<div class="hero-banner">
+    <h1>🏨 강남 호스텔 임차 컨버전 입지 · CompSet · 수지 스크리너</h1>
+    <p>건축물대장 용도변경 적격성 + 역세권·관광 POI + Google Hotels Comp Set ADR·OCC + 마스터리스 Payback 시뮬레이터</p>
+</div>
+""", unsafe_allow_html=True)
 
 if run_btn:
     if not data_go_key or not kakao_api_key:
-        st.error("사이드바에 공공데이터포털 인증키와 카카오 REST API 키를 모두 입력해 주세요.")
+        st.error("API 키가 설정되지 않았습니다. 로컬 `.env` 또는 클라우드 `Secrets` 설정을 확인해 주세요.")
         st.stop()
 
     with st.spinner("주소 지오코딩, 건축물대장, 지하철역, 관광공사 POI, 인허가 데이터를 수집 중입니다..."):
@@ -342,7 +415,7 @@ with tab4:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("Comp Set 등록", width="stretch"):
                 if not serpapi_key:
-                    st.error("사이드바에 SerpApi 키를 먼저 입력해 주세요.")
+                    st.error("SerpApi 키가 설정되지 않았습니다. 로컬 `.env` 또는 클라우드 `Secrets` 설정을 확인해 주세요.")
                 elif not new_hotel_name.strip():
                     st.warning("숙소명을 입력해 주세요.")
                 else:
@@ -385,7 +458,7 @@ with tab4:
 
         if fetch_cal_btn:
             if not serpapi_key:
-                st.error("사이드바에 SerpApi 키를 입력해 주세요.")
+                st.error("SerpApi 키가 설정되지 않았습니다. 로컬 `.env` 또는 클라우드 `Secrets` 설정을 확인해 주세요.")
             else:
                 with st.spinner("Google Hotels 일자별 요금 및 매진 현황을 수집 중입니다..."):
                     try:
@@ -596,6 +669,20 @@ with tab5:
         },
     ])
     st.dataframe(breakdown_df, width="stretch", hide_index=True)
+
+    st.markdown("#### 월간 손익 구조 한눈에 보기 (단위: 만원)")
+    pnl_chart_df = pd.DataFrame({
+        "항목": ["1. 월 총매출", "2. 순매출(OTA후)", "3. 임대료", "4. 인건비·기타고정", "5. 변동비", "6. 영업현금흐름(EBITDA)"],
+        "금액(만원)": [
+            round(gross_monthly_rev_man, 1),
+            round(net_monthly_rev_man, 1),
+            round(monthly_rent_man, 1),
+            round(staff_cost_man + fixed_etc_opex_man, 1),
+            round(monthly_var_opex_man, 1),
+            round(monthly_ebitda_man, 1),
+        ],
+    }).set_index("항목")
+    st.bar_chart(pnl_chart_df, height=260)
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
