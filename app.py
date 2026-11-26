@@ -368,7 +368,7 @@ else:
     with tab3:
         st.subheader("후보 부지 중심 지하철역·학교보호구역·관광 POI·경쟁 숙박 분포 지도")
         st.caption("🔴 후보지 | 🟢 지하철역 | 🟠 반경 200m 학교 | 🔵 관광 POI | 🟣 행안부 관광숙박 | 🟡 카카오 숙박")
-        m = folium.Map(location=[geo["lat"], geo["lng"]], zoom_start=15, tiles="CartoDB positron")
+        m = folium.Map(location=[geo["lat"], geo["lng"]], zoom_start=15, tiles="OpenStreetMap")
         folium.Circle(location=[geo["lat"], geo["lng"]], radius=radius, color="#2563EB", fill=True, fill_opacity=0.06).add_to(m)
         folium.Circle(location=[geo["lat"], geo["lng"]], radius=200, color="#DC2626", dash_array="5,5", fill=False, popup="학교 환경보호구역 체크 반경(200m)").add_to(m)
         folium.Marker([geo["lat"], geo["lng"]], popup=f"<b>[후보지] {bld_name}</b>", icon=folium.Icon(color="red", icon="star")).add_to(m)
