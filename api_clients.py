@@ -413,6 +413,67 @@ def fetch_mois_tourist_lodging(lat: float, lng: float, radius: int, data_key: st
     return df.sort_values("거리(m)").reset_index(drop=True) if not df.empty else df
 
 
+@st.cache_data(ttl=3600)
+def fetch_mois_general_lodging(lat: float, lng: float, radius: int, data_key: str, max_pages: int = 10) -> pd.DataFrame:
+    """행정안전부 일반 숙박업(lodgings) 인허가 데이터를 조회해 반경 내 영업 중 업소를 필터링합니다."""
+    url = "https://apis.data.go.kr/1741000/lodgings/info"
+    key = normalize_service_key(data_key)
+    transformer = get_tm_to_wgs84_transformer()
+    matched = []
+    for page in range(1, max_pages + 1):
+        params = {"serviceKey": key, "pageNo": page, "numOfRows": 1000, "returnType": "json"}
+        try:
+            r = requests.get(url, params=params, timeout=15)
+            if r.status_code != 200:
+                break
+            payload = r.json()
+            items = (
+                payload.get("response", {}).get("body", {}).get("items", {}).get("item")
+                or payload.get("body", {}).get("items")
+                or []
+            )
+            items = ensure_list(items)
+            if not items:
+                break
+            for it in items:
+                row = {k.upper(): v for k, v in it.items()}
+                status = str(row.get("DTL_SALS_STTS_NM") or row.get("SALS_STTS_NM") or row.get("DTL_STAT_NM") or "")
+                if any(x in status for x in ["폐업", "취소", "말소", "휴업"]):
+                    continue
+                x_raw = row.get("X") or row.get("CRD_INFO_X")
+                y_raw = row.get("Y") or row.get("CRD_INFO_Y")
+                if not x_raw or not y_raw:
+                    continue
+                try:
+                    t_lng, t_lat = transformer.transform(float(x_raw), float(y_raw))
+                except Exception:
+                    continue
+                dist = haversine_m(lat, lng, t_lat, t_lng)
+                if dist <= radius:
+                    w_cnt = int(float(row.get("WEST_ROOM_CNT") or 0))
+                    k_cnt = int(float(row.get("KOR_ROOM_CNT") or 0))
+                    g_cnt = int(float(row.get("GSRM_CNT") or 0))
+                    total_rooms = g_cnt if g_cnt > 0 else (w_cnt + k_cnt if (w_cnt + k_cnt) > 0 else None)
+                    perm_date = str(row.get("LCPMT_YMD") or row.get("APV_PERM_YMD") or "").strip()
+                    matched.append({
+                        "사업장명": row.get("BPLC_NM", ""),
+                        "업태구분": row.get("UPTAE_NM") or row.get("SANTN_UPTAE_NM") or "일반숙박업",
+                        "영업상태": status or "영업",
+                        "영업시작일": perm_date,
+                        "객실수(실)": total_rooms,
+                        "도로명주소": row.get("ROAD_NM_ADDR") or row.get("LOTNO_ADDR") or "",
+                        "거리(m)": round(dist, 1),
+                        "lat": t_lat,
+                        "lng": t_lng,
+                    })
+            if len(items) < 1000:
+                break
+        except Exception:
+            break
+    df = pd.DataFrame(matched)
+    return df.sort_values("거리(m)").reset_index(drop=True) if not df.empty else df
+
+
 def fetch_google_hotel_summary(hotel_query: str, serpapi_key: str) -> dict:
     """SerpApi Google Hotels에서 숙소 토큰, 매칭명, 글로벌 OTA 평점/리뷰/성급/1박가를 조회합니다."""
     today = datetime.date.today()

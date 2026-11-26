@@ -15,6 +15,7 @@ from api_clients import (
     fetch_google_hotel_summary,
     fetch_kakao_lodging,
     fetch_kakao_subway,
+    fetch_mois_general_lodging,
     fetch_mois_tourist_lodging,
     fetch_tour_api_poi,
     geocode_kakao,
@@ -211,6 +212,7 @@ if run_btn:
             bld_data = fetch_building_hub(geo, data_go_key)
             tour_df = fetch_tour_api_poi(geo["lat"], geo["lng"], search_radius, data_go_key)
             mois_df = fetch_mois_tourist_lodging(geo["lat"], geo["lng"], search_radius, data_go_key)
+            mois_gen_df = fetch_mois_general_lodging(geo["lat"], geo["lng"], search_radius, data_go_key)
             kakao_lodging_df = fetch_kakao_lodging(geo["lat"], geo["lng"], kakao_api_key, radius=search_radius)
             kakao_lodging_df = enrich_lodging_building_info(kakao_lodging_df, kakao_api_key, data_go_key, limit=15)
 
@@ -221,6 +223,7 @@ if run_btn:
                 "bld_data": bld_data,
                 "tour_df": tour_df,
                 "mois_df": mois_df,
+                "mois_gen_df": mois_gen_df,
                 "kakao_lodging_df": kakao_lodging_df,
                 "radius": search_radius,
             }
@@ -248,6 +251,7 @@ else:
     bld_data = res["bld_data"]
     tour_df = res["tour_df"]
     mois_df = res["mois_df"]
+    mois_gen_df = res.get("mois_gen_df", pd.DataFrame())
     kakao_lodging_df = res["kakao_lodging_df"]
     radius = res["radius"]
 
@@ -358,13 +362,14 @@ else:
             sub_b, sub_a = st.tabs(["카카오 로컬 전체 숙박(AD5 · 준공/규모)", "행안부 관광숙박업 인허가 (영업시작일·객실수)"])
 
             mois_meta_map = {}
-            if not mois_df.empty:
-                for _, mr in mois_df.iterrows():
-                    norm_n = str(mr["사업장명"]).replace(" ", "").lower()
-                    mois_meta_map[norm_n] = {
-                        "영업시작일": mr.get("영업시작일", ""),
-                        "객실수(실)": mr.get("객실수(실)"),
-                    }
+            for src_df in (mois_df, mois_gen_df):
+                if not src_df.empty:
+                    for _, mr in src_df.iterrows():
+                        norm_n = str(mr["사업장명"]).replace(" ", "").lower()
+                        mois_meta_map[norm_n] = {
+                            "영업시작일": mr.get("영업시작일", ""),
+                            "객실수(실)": mr.get("객실수(실)"),
+                        }
 
             with sub_b:
                 if not kakao_lodging_df.empty:
