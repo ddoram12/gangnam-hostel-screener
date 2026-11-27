@@ -579,6 +579,40 @@ def resolve_google_hotel_token(hotel_query: str, serpapi_key: str, region_hint: 
     return summary["property_token"], summary["resolved_title"]
 
 
+def discover_google_hotels_nearby(region_query: str, serpapi_key: str, max_results: int = 12) -> list[dict]:
+    """지역/상권 키워드로 Google Hotels에 실제 등록된 추적 가능 숙소 목록을 조회합니다."""
+    today = datetime.date.today()
+    params = {
+        "engine": "google_hotels",
+        "q": f"{region_query.strip()} 호스텔 호텔",
+        "check_in_date": (today + datetime.timedelta(days=7)).strftime("%Y-%m-%d"),
+        "check_out_date": (today + datetime.timedelta(days=8)).strftime("%Y-%m-%d"),
+        "adults": 1,
+        "currency": "KRW",
+        "gl": "kr",
+        "hl": "ko",
+        "api_key": serpapi_key.strip(),
+    }
+    resp = requests.get("https://serpapi.com/search.json", params=params, timeout=15)
+    resp.raise_for_status()
+    props = resp.json().get("properties", [])
+    results = []
+    for p in props[:max_results]:
+        token = p.get("property_token")
+        if not token:
+            continue
+        rate_info = p.get("rate_per_night") or {}
+        rate_val = extract_nightly_price(rate_info) if isinstance(rate_info, dict) else None
+        results.append({
+            "숙소명": p.get("name", ""),
+            "property_token": token,
+            "OTA평점": p.get("overall_rating"),
+            "리뷰수": p.get("reviews"),
+            "참고1박가(원)": round(rate_val) if rate_val else None,
+        })
+    return results
+
+
 def fetch_price_calendar_for_comp_set(
     comp_df: pd.DataFrame,
     serpapi_key: str,

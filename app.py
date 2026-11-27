@@ -10,6 +10,7 @@ from streamlit_folium import st_folium
 
 from api_clients import (
     check_school_zone_kakao,
+    discover_google_hotels_nearby,
     enrich_lodging_building_info,
     fetch_building_hub,
     fetch_google_hotel_summary,
@@ -595,6 +596,8 @@ else:
                             st.success(f"✅ {ok_cnt}개 숙소가 4번 탭 [직접 경쟁군(Comp Set)]에 등록되었습니다! 상단 4번 탭에서 바로 가격 캘린더를 수집해 보세요.")
                         for fm in fail_msgs:
                             st.warning(f"⚠️ 등록 실패 - {fm}")
+                        if fail_msgs:
+                            st.info("💡 소형/신규 호스텔은 Google Hotels에 미등록되어 있을 수 있습니다. **4번 탭 상단의 [주변 Google Hotels 등록 숙소 자동 찾기]**를 이용하시면 가격 추적이 가능한 인근 경쟁 숙소를 바로 찾으실 수 있습니다!")
 
     # [TAB 3] 지도 시각화
     with tab3:
@@ -682,6 +685,46 @@ else:
 with tab4:
     st.subheader("직접 경쟁군(Comp Set) 3~5곳 핀포인트 단가·가동률 추적")
     st.caption("1인 기준(도미토리)과 2인 기준(프라이빗룸)을 각각 수집해 5번 시뮬레이터의 평일·주말 변수로 분리 주입할 수 있습니다.")
+
+    with st.expander("🔍 주변 Google Hotels 등록 숙소 자동 찾기 (미등록 숙소 대안)", expanded=False):
+        st.caption("2번 탭의 소형 숙소가 Google Hotels에 미등록된 경우, 해당 지역에서 실제 가격·가동률 추적이 가능한 인근 호스텔/호텔을 한 번에 찾아 등록할 수 있습니다.")
+        default_region_q = "서울 강남구"
+        if "analysis_result" in st.session_state:
+            addr_parts = str(st.session_state["analysis_result"]["geo"].get("address_name", "")).split()
+            if len(addr_parts) >= 2:
+                default_region_q = " ".join(addr_parts[:3])
+        d_c1, d_c2 = st.columns([2.5, 1.5])
+        region_q = d_c1.text_input("검색 지역/상권 (예: 서울 광진구 화양동, 건대입구, 명동)", value=default_region_q, key="discover_region_q")
+        with d_c2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            discover_btn = st.button("🌐 추적 가능 숙소 찾기 (API 1회)", width="stretch", key="btn_discover_gh")
+        if discover_btn:
+            if not serpapi_key:
+                st.error("SerpApi 키가 설정되지 않았습니다. 로컬 `.env` 또는 클라우드 `Secrets` 설정을 확인해 주세요.")
+            elif not region_q.strip():
+                st.warning("검색할 지역이나 상권명을 입력해 주세요.")
+            else:
+                try:
+                    with st.spinner("Google Hotels에서 해당 지역 등록 숙소를 조회 중입니다..."):
+                        st.session_state["discovered_gh_list"] = discover_google_hotels_nearby(region_q, serpapi_key)
+                except Exception as e:
+                    st.error(f"조회 실패: {e}")
+
+        if st.session_state.get("discovered_gh_list"):
+            disc_list = st.session_state["discovered_gh_list"]
+            disc_df = pd.DataFrame(disc_list)[["숙소명", "OTA평점", "리뷰수", "참고1박가(원)"]]
+            st.dataframe(disc_df, width="stretch", hide_index=True)
+            picked_disc = st.multiselect("Comp Set으로 등록할 숙소 선택", options=[d["숙소명"] for d in disc_list], key="picked_disc_hotels")
+            if st.button("➕ 선택한 숙소 즉시 Comp Set 등록 (추가 API 소모 없음)", type="primary", key="btn_reg_disc"):
+                if not picked_disc:
+                    st.warning("등록할 숙소를 먼저 선택해 주세요.")
+                else:
+                    for d_item in disc_list:
+                        if d_item["숙소명"] in picked_disc:
+                            note_s = f"평점:{d_item['OTA평점'] or '-'} / 리뷰:{d_item['리뷰수'] or '-'}"
+                            upsert_comp_set_property(d_item["숙소명"], d_item["property_token"], d_item["숙소명"], note_s)
+                    st.success(f"✅ {len(picked_disc)}개 숙소가 등록되었습니다!")
+                    st.rerun()
 
     with st.expander("➕ Comp Set 경쟁 호스텔 추가 / 삭제 관리", expanded=True):
         st.caption("💡 서울권 예시 검색어: `위코스테이 명동`, `오클라우드 호텔 강남`, `신라스테이 역삼`, `나인트리 명동` 등 Google Hotels에 등록된 실제 상호를 입력하세요.")
