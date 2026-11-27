@@ -724,17 +724,20 @@ with tab4:
             disc_list = st.session_state["discovered_gh_list"]
             exclude_rentals = st.checkbox("1실 독채/공유숙박 제외 (호텔·호스텔만 보기)", value=True, key="chk_exclude_rentals")
 
-            # 2번 탭 행안부 인허가 데이터와 매칭해 실제 객실수(실) 보강
-            room_lookup = {}
+            # 2번 탭 행안부 인허가 데이터와 매칭해 실제 오픈일(영업시작일) 및 객실수(실) 보강
+            mois_meta_lookup = {}
             if "analysis_result" in st.session_state:
                 ar_disc = st.session_state["analysis_result"]
                 for src_d in (ar_disc.get("mois_df", pd.DataFrame()), ar_disc.get("mois_gen_df", pd.DataFrame())):
                     if not src_d.empty:
                         for _, mr in src_d.iterrows():
+                            rk = str(mr["사업장명"]).replace(" ", "").lower()
                             r_cnt = mr.get("객실수(실)")
-                            if pd.notna(r_cnt) and r_cnt:
-                                rk = str(mr["사업장명"]).replace(" ", "").lower()
-                                room_lookup[rk] = int(r_cnt)
+                            open_dt = str(mr.get("영업시작일") or "").strip()
+                            mois_meta_lookup[rk] = {
+                                "rooms": int(r_cnt) if pd.notna(r_cnt) and r_cnt else None,
+                                "open_date": open_dt,
+                            }
 
             import re
             _RENTAL_NAME_RE = re.compile(
@@ -749,7 +752,9 @@ with tab4:
                 if exclude_rentals and is_r:
                     continue
                 dk = nm_str.replace(" ", "").lower()
-                matched_r = room_lookup.get(dk) or next((v for k, v in room_lookup.items() if k and (k in dk or dk in k)), None)
+                matched_meta = mois_meta_lookup.get(dk) or next((v for k, v in mois_meta_lookup.items() if k and (k in dk or dk in k)), None)
+                matched_r = matched_meta.get("rooms") if matched_meta else None
+                open_str = (matched_meta.get("open_date") or "-") if matched_meta else "-"
                 if matched_r:
                     room_str = f"{matched_r}실"
                 elif is_r:
@@ -759,6 +764,7 @@ with tab4:
                 enriched_disc.append({
                     "숙소명": nm_str,
                     "숙소유형": "독채/공유숙박(1실)" if is_r else d.get("숙소유형", "호텔/호스텔"),
+                    "오픈일": open_str,
                     "객실수": room_str,
                     "OTA평점": d.get("OTA평점"),
                     "리뷰수": d.get("리뷰수"),
