@@ -400,6 +400,15 @@ else:
                 return s.replace(" ", "").lower()
 
             mois_all_df = pd.concat([d for d in (mois_df, mois_gen_df) if not d.empty], ignore_index=True) if (not mois_df.empty or not mois_gen_df.empty) else pd.DataFrame()
+            if not mois_all_df.empty:
+                mois_all_df["_dedup_key"] = mois_all_df["사업장명"].astype(str).str.replace(" ", "", regex=False).str.lower()
+                mois_all_df["_has_area"] = mois_all_df["시설면적(㎡)"].notna() if "시설면적(㎡)" in mois_all_df.columns else False
+                mois_all_df = (
+                    mois_all_df.sort_values(["거리(m)", "_has_area"], ascending=[True, False])
+                    .drop_duplicates(subset=["_dedup_key"], keep="first")
+                    .drop(columns=["_dedup_key", "_has_area"], errors="ignore")
+                    .reset_index(drop=True)
+                )
             mois_meta_map = {}
             mois_addr_map = {}
             mois_records = []

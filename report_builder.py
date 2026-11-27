@@ -68,7 +68,12 @@ def build_full_excel_bytes(
             mois_t = analysis_result.get("mois_df", pd.DataFrame())
             mois_g = analysis_result.get("mois_gen_df", pd.DataFrame())
             mois_all = pd.concat([d for d in (mois_t, mois_g) if not d.empty], ignore_index=True) if (not mois_t.empty or not mois_g.empty) else pd.DataFrame()
+        if not mois_all.empty:
+            mois_all["_dk"] = mois_all["사업장명"].astype(str).str.replace(" ", "", regex=False).str.lower()
+            mois_all = mois_all.sort_values("거리(m)").drop_duplicates(subset=["_dk"], keep="first").drop(columns=["_dk"])
             if not mois_all.empty:
+                mois_all["_dk"] = mois_all["사업장명"].astype(str).str.replace(" ", "", regex=False).str.lower()
+                mois_all = mois_all.sort_values("거리(m)").drop_duplicates(subset=["_dk"], keep="first").drop(columns=["_dk"])
                 mois_all.to_excel(writer, sheet_name="03_2_행안부인허가숙박", index=False)
 
         if comp_df is not None and not comp_df.empty:
@@ -150,6 +155,9 @@ def build_printable_html_report(
         mois_t = analysis_result.get("mois_df", pd.DataFrame())
         mois_g = analysis_result.get("mois_gen_df", pd.DataFrame())
         mois_all = pd.concat([d for d in (mois_t, mois_g) if not d.empty], ignore_index=True) if (not mois_t.empty or not mois_g.empty) else pd.DataFrame()
+        if not mois_all.empty:
+            mois_all["_dk"] = mois_all["사업장명"].astype(str).str.replace(" ", "", regex=False).str.lower()
+            mois_all = mois_all.sort_values("거리(m)").drop_duplicates(subset=["_dk"], keep="first").drop(columns=["_dk"])
         m_cols = [c for c in ["사업장명", "업태구분", "영업시작일", "객실수(실)", "거리(m)", "도로명주소"] if c in mois_all.columns]
 
         nearest_sub = f"{subway_df.iloc[0]['역명']} ({subway_df.iloc[0]['거리(m)']}m)" if not subway_df.empty else "없음"
