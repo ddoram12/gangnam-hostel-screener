@@ -23,6 +23,7 @@ from api_clients import (
     fetch_price_calendar_for_comp_set,
 )
 from db_manager import (
+    clear_comp_set_properties,
     delete_comp_set_property,
     get_saved_comp_set,
     init_db,
@@ -464,10 +465,12 @@ else:
                     else:
                         ota_rows = []
                         ota_cache = st.session_state.setdefault("ota_summary_cache", {})
+                        r_tokens = [tok for tok in str(geo.get("address_name", "")).split() if tok.endswith(("구", "시"))]
+                        r_hint = next((t for t in r_tokens if t.endswith("구")), "서울")
                         with st.spinner("Google Hotels에서 글로벌 OTA 평점·리뷰·참고가를 조회 중입니다..."):
                             for name in selected_cands:
                                 try:
-                                    info = fetch_google_hotel_summary(name, serpapi_key)
+                                    info = fetch_google_hotel_summary(name, serpapi_key, region_hint=r_hint)
                                     ota_cache[name] = info
                                     ota_rows.append({
                                         "선택숙소": name,
@@ -498,11 +501,13 @@ else:
                         st.error("SerpApi 키가 설정되지 않았습니다. 로컬 `.env` 또는 클라우드 `Secrets` 설정을 확인해 주세요.")
                     else:
                         ota_cache = st.session_state.setdefault("ota_summary_cache", {})
+                        r_tokens = [tok for tok in str(geo.get("address_name", "")).split() if tok.endswith(("구", "시"))]
+                        r_hint = next((t for t in r_tokens if t.endswith("구")), "서울")
                         ok_cnt, fail_msgs = 0, []
                         with st.spinner("선택한 숙소를 4번 Comp Set에 등록 중입니다..."):
                             for name in selected_cands:
                                 try:
-                                    info = ota_cache.get(name) or fetch_google_hotel_summary(name, serpapi_key)
+                                    info = ota_cache.get(name) or fetch_google_hotel_summary(name, serpapi_key, region_hint=r_hint)
                                     ota_cache[name] = info
                                     note_parts = []
                                     norm_n = name.replace(" ", "").lower()
@@ -642,13 +647,17 @@ with tab4:
         saved_comp_df = get_saved_comp_set()
         if not saved_comp_df.empty:
             st.dataframe(saved_comp_df[["입력숙소명", "구글매칭명", "비고", "등록일"]], width="stretch", hide_index=True)
-            del_col1, del_col2 = st.columns([3, 1])
+            del_col1, del_col2, del_col3 = st.columns([2.5, 1, 1])
             del_target = del_col1.selectbox("삭제할 숙소 선택", options=saved_comp_df["입력숙소명"].tolist())
             if del_col2.button("선택 숙소 삭제", width="stretch"):
                 delete_comp_set_property(del_target)
                 st.rerun()
+            if del_col3.button("전체 목록 비우기", width="stretch"):
+                clear_comp_set_properties()
+                st.session_state.pop("latest_comp_snap", None)
+                st.rerun()
         else:
-            st.info("등록된 Comp Set이 없습니다. 직접 경쟁 호스텔 3~5곳을 등록해 주세요.")
+            st.info("등록된 Comp Set이 없습니다. 2번 탭에서 숙소를 선택해 등록하거나 위 입력란에 직접 경쟁 호스텔을 등록해 주세요.")
 
     if not saved_comp_df.empty:
         st.markdown("---")
@@ -681,7 +690,9 @@ with tab4:
                     except Exception as e:
                         st.error(f"캘린더 수집 오류: {e}")
 
-        if "latest_comp_snap" in st.session_state and not st.session_state["latest_comp_snap"].empty:
+        if "latest_comp_snap" not in st.session_state or st.session_state["latest_comp_snap"].empty:
+            st.info("👆 위 파란색 **[가격 캘린더 수집]** 버튼을 누르시면 등록된 경쟁 숙소들의 평일·주말 ADR과 마감률(추정 OCC)이 즉시 계산됩니다!")
+        else:
             snap_df = st.session_state["latest_comp_snap"]
             captured_adults = st.session_state.get("latest_comp_adults", 1)
 

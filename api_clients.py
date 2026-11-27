@@ -482,12 +482,43 @@ def fetch_mois_general_lodging(
     return df.sort_values("거리(m)").reset_index(drop=True) if not df.empty else df
 
 
-def fetch_google_hotel_summary(hotel_query: str, serpapi_key: str) -> dict:
+def _is_hotel_name_match(query_name: str, candidate_name: str) -> bool:
+    """입력한 숙소명과 Google Hotels 매칭명의 핵심 단어가 실제로 일치하는지 검증합니다."""
+    def _clean(s: str) -> str:
+        s = re.sub(r"\([^)]*\)", "", str(s or ""))
+        return re.sub(r"[^0-9a-zA-Z가-힣]", "", s).lower()
+
+    q_clean = _clean(query_name)
+    c_clean = _clean(candidate_name)
+    if not q_clean or not c_clean:
+        return False
+    if q_clean in c_clean or c_clean in q_clean:
+        return True
+
+    # 공통 2글자 이상 바이그램(어절) 비율로 유사도 판정
+    q_core = re.sub(r"(호텔|호스텔|모텔|여관|게스트하우스|스테이|레지던스|관광|서울|강남|점|hotel|hostel|stay)", "", q_clean)
+    c_core = re.sub(r"(호텔|호스텔|모텔|여관|게스트하우스|스테이|레지던스|관광|서울|강남|점|hotel|hostel|stay)", "", c_clean)
+    target_q = q_core if len(q_core) >= 2 else q_clean
+    target_c = c_core if len(c_core) >= 2 else c_clean
+    if target_q in target_c or target_c in target_q:
+        return True
+    if len(target_q) >= 2 and len(target_c) >= 2:
+        q_grams = {target_q[i : i + 2] for i in range(len(target_q) - 1)}
+        c_grams = {target_c[i : i + 2] for i in range(len(target_c) - 1)}
+        overlap = len(q_grams & c_grams)
+        if overlap >= max(1, min(len(q_grams), len(c_grams)) * 0.5):
+            return True
+    return False
+
+
+def fetch_google_hotel_summary(hotel_query: str, serpapi_key: str, region_hint: str = "") -> dict:
     """SerpApi Google Hotels에서 숙소 토큰, 매칭명, 글로벌 OTA 평점/리뷰/성급/1박가를 조회합니다."""
     today = datetime.date.today()
+    clean_q = re.sub(r"\([^)]*\)", "", hotel_query).strip() or hotel_query.strip()
+    search_q = f"{clean_q} {region_hint}".strip() if region_hint and region_hint not in clean_q else clean_q
     params = {
         "engine": "google_hotels",
-        "q": hotel_query.strip(),
+        "q": search_q,
         "check_in_date": (today + datetime.timedelta(days=7)).strftime("%Y-%m-%d"),
         "check_out_date": (today + datetime.timedelta(days=8)).strftime("%Y-%m-%d"),
         "adults": 1,
@@ -500,17 +531,19 @@ def fetch_google_hotel_summary(hotel_query: str, serpapi_key: str) -> dict:
     resp.raise_for_status()
     data = resp.json()
 
-    target = data if data.get("property_token") else None
+    target = None
+    if data.get("property_token") and _is_hotel_name_match(clean_q, data.get("name", "")):
+        target = data
+    else:
+        for prop in data.get("properties", [])[:10]:
+            if prop.get("property_token") and _is_hotel_name_match(clean_q, prop.get("name", "")):
+                target = prop
+                break
+
     if target is None:
-        props = data.get("properties", [])
-        if not props:
-            raise ValueError(f"'{hotel_query}'에 해당하는 Google Hotels 등록 숙소를 찾지 못했습니다.")
-        target = props[0]
+        raise ValueError(f"Google Hotels에서 '{clean_q}'와 일치하는 숙소를 찾지 못했습니다 (미등록 숙소 가능성).")
 
     token = target.get("property_token")
-    if not token:
-        raise ValueError(f"'{hotel_query}'의 property_token을 추출할 수 없습니다.")
-
     rate_info = target.get("rate_per_night") or {}
     rate_val = extract_nightly_price(rate_info) if isinstance(rate_info, dict) else None
 
@@ -524,9 +557,9 @@ def fetch_google_hotel_summary(hotel_query: str, serpapi_key: str) -> dict:
     }
 
 
-def resolve_google_hotel_token(hotel_query: str, serpapi_key: str) -> tuple[str, str]:
+def resolve_google_hotel_token(hotel_query: str, serpapi_key: str, region_hint: str = "") -> tuple[str, str]:
     """SerpApi Google Hotels에서 숙소명으로부터 property_token과 매칭명을 조회합니다."""
-    summary = fetch_google_hotel_summary(hotel_query, serpapi_key)
+    summary = fetch_google_hotel_summary(hotel_query, serpapi_key, region_hint=region_hint)
     return summary["property_token"], summary["resolved_title"]
 
 
@@ -558,16 +591,18 @@ def fetch_price_calendar_for_comp_set(
             "hl": "ko",
             "api_key": serpapi_key.strip(),
         }
-        r = requests.get("https://serpapi.com/search.json", params=params, timeout=15)
-        r.raise_for_status()
-        prices = r.json().get("prices", [])
-
         price_map = {}
-        for p in prices:
-            dt_str = p.get("date")
-            val = extract_nightly_price(p)
-            if dt_str and val is not None:
-                price_map[dt_str] = val
+        try:
+            r = requests.get("https://serpapi.com/search.json", params=params, timeout=15)
+            r.raise_for_status()
+            prices = r.json().get("prices", [])
+            for p in prices:
+                dt_str = p.get("date")
+                val = extract_nightly_price(p)
+                if dt_str and val is not None:
+                    price_map[dt_str] = val
+        except Exception:
+            pass
 
         for i in range(1, days_ahead + 1):
             target_dt = today + datetime.timedelta(days=i)

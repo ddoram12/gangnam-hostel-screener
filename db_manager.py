@@ -74,6 +74,15 @@ def delete_comp_set_property(hotel_name: str):
     conn.close()
 
 
+def clear_comp_set_properties():
+    """등록된 모든 Comp Set 숙소를 삭제합니다."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM comp_set_properties")
+    conn.commit()
+    conn.close()
+
+
 def save_snapshots_to_db(records: list[dict]):
     """수집된 일자별 가격 스냅샷을 DB에 저장합니다."""
     if not records:
