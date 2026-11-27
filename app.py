@@ -736,12 +736,19 @@ with tab4:
                                 rk = str(mr["사업장명"]).replace(" ", "").lower()
                                 room_lookup[rk] = int(r_cnt)
 
+            import re
+            _RENTAL_NAME_RE = re.compile(
+                r"(감성숙소|홈\s*시네마|무료주차|도보\s*\d+분|min\s*walk|1st\s*floor|room\s*\d+|\d+\s*beds?|villa|루프탑|독채|올림픽공원\s*\|)",
+                re.IGNORECASE,
+            )
+
             enriched_disc = []
             for d in disc_list:
-                is_r = d.get("is_rental", False)
+                nm_str = str(d.get("숙소명", ""))
+                is_r = bool(d.get("is_rental", False)) or bool(_RENTAL_NAME_RE.search(nm_str))
                 if exclude_rentals and is_r:
                     continue
-                dk = str(d["숙소명"]).replace(" ", "").lower()
+                dk = nm_str.replace(" ", "").lower()
                 matched_r = room_lookup.get(dk) or next((v for k, v in room_lookup.items() if k and (k in dk or dk in k)), None)
                 if matched_r:
                     room_str = f"{matched_r}실"
@@ -750,8 +757,8 @@ with tab4:
                 else:
                     room_str = "다객실(미확인)"
                 enriched_disc.append({
-                    "숙소명": d["숙소명"],
-                    "숙소유형": d.get("숙소유형", "호텔/호스텔"),
+                    "숙소명": nm_str,
+                    "숙소유형": "독채/공유숙박(1실)" if is_r else d.get("숙소유형", "호텔/호스텔"),
                     "객실수": room_str,
                     "OTA평점": d.get("OTA평점"),
                     "리뷰수": d.get("리뷰수"),
