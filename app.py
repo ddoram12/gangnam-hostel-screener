@@ -792,12 +792,20 @@ with tab4:
 
     if not saved_comp_df.empty:
         st.markdown("---")
-        col_run1, col_run3 = st.columns([1.5, 3.5])
+        col_run1, col_run2, col_run3 = st.columns([1.2, 2.2, 2.1])
         track_days = col_run1.selectbox("향후 조회 기간", options=[14, 21, 30], index=1, format_func=lambda x: f"향후 {x}일")
+        with col_run2:
+            st.markdown("<div style='font-size:14px;font-weight:500;margin-bottom:6px;'>객실 단가 기준 (1~3개 선택)</div>", unsafe_allow_html=True)
+            chk_c1, chk_c2, chk_c3 = st.columns(3)
+            g1 = chk_c1.checkbox("1인(도미)", value=True, key="chk_guest_1")
+            g2 = chk_c2.checkbox("2인(더블)", value=False, key="chk_guest_2")
+            g4 = chk_c3.checkbox("4인(그룹)", value=False, key="chk_guest_4")
+            selected_guests = [g for g, ok in [(1, g1), (2, g2), (4, g4)] if ok]
         with col_run3:
             st.markdown("<br>", unsafe_allow_html=True)
+            api_calls_est = len(saved_comp_df) * len(selected_guests)
             fetch_cal_btn = st.button(
-                f"선택된 {len(saved_comp_df)}개사 가격 캘린더 일괄 수집 (1·2·4인 기준 / API {len(saved_comp_df) * 3}회 소모)",
+                f"선택된 {len(saved_comp_df)}개사 가격 캘린더 수집 (API {api_calls_est}회 소모)",
                 type="primary",
                 width="stretch",
             )
@@ -805,12 +813,15 @@ with tab4:
         if fetch_cal_btn:
             if not serpapi_key:
                 st.error("SerpApi 키가 설정되지 않았습니다. 로컬 `.env` 또는 클라우드 `Secrets` 설정을 확인해 주세요.")
+            elif not selected_guests:
+                st.warning("조회할 객실 단가 기준(1인/2인/4인)을 최소 1개 이상 체크해 주세요.")
             else:
-                with st.spinner("1인 · 2인 · 4인 기준 Google Hotels 일자별 요금 및 매진 현황을 일괄 수집 중입니다..."):
+                guest_str = "·".join(f"{g}인" for g in selected_guests)
+                with st.spinner(f"{guest_str} 기준 Google Hotels 일자별 요금 및 매진 현황을 수집 중입니다..."):
                     try:
                         all_snaps = [
                             fetch_price_calendar_for_comp_set(saved_comp_df, serpapi_key, days_ahead=track_days, adults=ad)
-                            for ad in (1, 2, 4)
+                            for ad in selected_guests
                         ]
                         snap_df = pd.concat([d for d in all_snaps if not d.empty], ignore_index=True) if any(not d.empty for d in all_snaps) else pd.DataFrame()
                         st.session_state["latest_comp_snap"] = snap_df
@@ -818,7 +829,7 @@ with tab4:
                         st.error(f"캘린더 수집 오류: {e}")
 
         if "latest_comp_snap" not in st.session_state or st.session_state["latest_comp_snap"].empty:
-            st.info("👆 위 파란색 **[가격 캘린더 일괄 수집]** 버튼을 누르시면 등록된 경쟁 숙소들의 **1인 · 2인 · 4인 기준** 평일·주말 ADR과 추정 OCC가 한 번에 계산됩니다!")
+            st.info("👆 원하시는 기준(1인·2인·4인)을 체크한 뒤 파란색 **[가격 캘린더 수집]** 버튼을 누르시면 평일·주말 ADR과 추정 OCC가 즉시 계산됩니다!")
         else:
             snap_df = st.session_state["latest_comp_snap"]
 
