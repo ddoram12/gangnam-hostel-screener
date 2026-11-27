@@ -190,33 +190,6 @@ search_radius = st.sidebar.select_slider(
 
 run_btn = st.sidebar.button("🔍 입지 및 용도변경 스크리닝 실행", type="primary", width="stretch")
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("**📄 전체 검토 내용 저장 · 인쇄**")
-_sb_ar = st.session_state.get("analysis_result")
-_sb_comp = get_saved_comp_set()
-_sb_snap = st.session_state.get("latest_comp_snap")
-_sb_sim = st.session_state.get("latest_sim_summary")
-_sb_brk = st.session_state.get("latest_breakdown_df")
-_today_tag = datetime.date.today().strftime("%Y%m%d")
-
-st.sidebar.download_button(
-    label="📥 전체 내용 저장 (Excel)",
-    data=build_full_excel_bytes(_sb_ar, _sb_comp, _sb_snap, _sb_sim, _sb_brk),
-    file_name=f"서울_호스텔_전체검토_{_today_tag}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    width="stretch",
-    key="sidebar_download_excel",
-)
-st.sidebar.download_button(
-    label="🖨️ 전체 내용 인쇄 / PDF",
-    data=build_printable_html_report(_sb_ar, _sb_comp, _sb_snap, _sb_sim, _sb_brk).encode("utf-8"),
-    file_name=f"서울_호스텔_인쇄보고서_{_today_tag}.html",
-    mime="text/html",
-    width="stretch",
-    key="sidebar_download_print_html",
-    help="내려받은 파일을 열면 바로 '인쇄 / PDF로 저장' 버튼으로 출력할 수 있습니다.",
-)
-
 # ---------------------------------------------------------
 # 3. 메인 화면 실행 로직
 # ---------------------------------------------------------
@@ -1192,4 +1165,40 @@ with tab5:
         data=excel_bytes,
         file_name=f"서울_호스텔_수지검토_{datetime.date.today().strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+# ---------------------------------------------------------
+# 4. 사이드바 하단: 1~5번 탭 최신 결과 기반 전체 저장 · 인쇄 버튼
+# ---------------------------------------------------------
+with st.sidebar:
+    st.markdown("---")
+    st.markdown("**📄 전체 검토 내용 저장 · 인쇄**")
+    _sb_ar = st.session_state.get("analysis_result")
+    _sb_comp = get_saved_comp_set()
+    _sb_snap = st.session_state.get("latest_comp_snap")
+    if (_sb_snap is None or _sb_snap.empty) and not _sb_comp.empty:
+        _hist = load_historical_snapshots(30)
+        if not _hist.empty:
+            _latest_dt = _hist["수집일자"].max()
+            _sb_snap = _hist[_hist["수집일자"] == _latest_dt].copy()
+    _sb_sim = st.session_state.get("latest_sim_summary")
+    _sb_brk = st.session_state.get("latest_breakdown_df")
+    _today_tag = datetime.date.today().strftime("%Y%m%d")
+
+    st.download_button(
+        label="📥 전체 내용 저장 (Excel)",
+        data=build_full_excel_bytes(_sb_ar, _sb_comp, _sb_snap, _sb_sim, _sb_brk),
+        file_name=f"서울_호스텔_전체검토_{_today_tag}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        width="stretch",
+        key="sidebar_download_excel",
+    )
+    st.download_button(
+        label="🖨️ 전체 내용 인쇄 / PDF",
+        data=build_printable_html_report(_sb_ar, _sb_comp, _sb_snap, _sb_sim, _sb_brk).encode("utf-8"),
+        file_name=f"서울_호스텔_인쇄보고서_{_today_tag}.html",
+        mime="text/html",
+        width="stretch",
+        key="sidebar_download_print_html",
+        help="내려받은 파일을 열면 바로 '인쇄 / PDF로 저장' 버튼으로 출력할 수 있습니다.",
     )

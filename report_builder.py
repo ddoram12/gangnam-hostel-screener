@@ -182,11 +182,24 @@ def build_printable_html_report(
 
     per_hotel_df = compute_per_hotel_summary(comp_snap_df) if comp_snap_df is not None else pd.DataFrame()
     comp_disp = comp_df[["입력숙소명", "구글매칭명", "비고"]] if (comp_df is not None and not comp_df.empty) else pd.DataFrame()
+    cal_matrix_html = ""
+    if comp_snap_df is not None and not comp_snap_df.empty:
+        piv_list = []
+        if "기준인원" in comp_snap_df.columns:
+            for ad_v, grp_ad in comp_snap_df.groupby("기준인원", sort=True):
+                piv = grp_ad.pivot(index="체크인일자", columns="경쟁숙소", values="노출판매가(원)").reset_index()
+                piv_list.append(f"<h4>{int(ad_v)}인 기준 일자별 판매가 (상위 14일, 원)</h4>{_df_to_html(piv, 14)}")
+        else:
+            piv = comp_snap_df.pivot(index="체크인일자", columns="경쟁숙소", values="노출판매가(원)").reset_index()
+            piv_list.append(f"<h4>일자별 판매가 (상위 14일, 원)</h4>{_df_to_html(piv, 14)}")
+        cal_matrix_html = "".join(piv_list)
+
     sec4_html = f"""
     <h4>등록된 Comp Set 목록</h4>
     {_df_to_html(comp_disp, 15)}
-    <h4>숙소별 평일 · 주말 ADR 및 추정 OCC</h4>
-    {_df_to_html(per_hotel_df, 15)}
+    <h4>숙소별 평일 · 주말 ADR 및 전량마감률 · 만실임박</h4>
+    {_df_to_html(per_hotel_df, 20)}
+    {cal_matrix_html}
     """
 
     sec5_html = "<p class='empty'>수지 시뮬레이터 데이터가 없습니다.</p>"
