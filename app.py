@@ -722,7 +722,24 @@ with tab4:
         if st.session_state.get("discovered_gh_list"):
             disc_list = st.session_state["discovered_gh_list"]
             disc_df = pd.DataFrame(disc_list)[["숙소명", "OTA평점", "리뷰수", "참고1박가(원)"]]
-            st.dataframe(disc_df, width="stretch", hide_index=True)
+            st.caption("💡 아래 표에서 원하는 숙소 행(또는 왼쪽 체크박스)을 클릭하면 하단 선택창에 자동으로 담깁니다.")
+            disc_event = st.dataframe(
+                disc_df,
+                width="stretch",
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="multi-row",
+                key="disc_gh_table",
+            )
+            disc_table_picked = [
+                str(disc_df.iloc[idx]["숙소명"])
+                for idx in disc_event.selection.rows
+                if idx < len(disc_df)
+            ]
+            if st.session_state.get("_prev_disc_picked") != disc_table_picked:
+                st.session_state["_prev_disc_picked"] = disc_table_picked
+                st.session_state["picked_disc_hotels"] = disc_table_picked
+
             picked_disc = st.multiselect("Comp Set으로 등록할 숙소 선택", options=[d["숙소명"] for d in disc_list], key="picked_disc_hotels")
             if st.button("➕ 선택한 숙소 즉시 Comp Set 등록 (추가 API 소모 없음)", type="primary", key="btn_reg_disc"):
                 if not picked_disc:
