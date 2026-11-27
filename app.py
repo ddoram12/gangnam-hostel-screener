@@ -829,16 +829,43 @@ with tab4:
 
         saved_comp_df = get_saved_comp_set()
         if not saved_comp_df.empty:
-            st.dataframe(saved_comp_df[["입력숙소명", "구글매칭명", "비고", "등록일"]], width="stretch", hide_index=True)
+            saved_opts = saved_comp_df["입력숙소명"].tolist()
+            comp_tbl_event = st.dataframe(
+                saved_comp_df[["입력숙소명", "구글매칭명", "비고", "등록일"]],
+                width="stretch",
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key="saved_comp_table",
+            )
+            if comp_tbl_event.selection.rows:
+                sel_idx = comp_tbl_event.selection.rows[0]
+                if sel_idx < len(saved_opts):
+                    picked_name = saved_opts[sel_idx]
+                    if st.session_state.get("_prev_saved_comp_row") != picked_name:
+                        st.session_state["_prev_saved_comp_row"] = picked_name
+                        st.session_state["comp_del_target"] = picked_name
+
+            if st.session_state.get("comp_del_target") not in saved_opts:
+                st.session_state["comp_del_target"] = saved_opts[0]
+
             del_col1, del_col2, del_col3 = st.columns([2.5, 1, 1])
-            del_target = del_col1.selectbox("삭제할 숙소 선택", options=saved_comp_df["입력숙소명"].tolist())
-            if del_col2.button("선택 숙소 삭제", width="stretch"):
-                delete_comp_set_property(del_target)
-                st.rerun()
-            if del_col3.button("전체 목록 비우기", width="stretch"):
-                clear_comp_set_properties()
-                st.session_state.pop("latest_comp_snap", None)
-                st.rerun()
+            del_target = del_col1.selectbox("삭제할 숙소 선택", options=saved_opts, key="comp_del_target")
+            with del_col2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("선택 숙소 삭제", width="stretch", key="btn_del_one_comp"):
+                    delete_comp_set_property(del_target)
+                    st.session_state.pop("comp_del_target", None)
+                    st.session_state.pop("_prev_saved_comp_row", None)
+                    st.rerun()
+            with del_col3:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("전체 목록 비우기", width="stretch", key="btn_del_all_comp"):
+                    clear_comp_set_properties()
+                    st.session_state.pop("latest_comp_snap", None)
+                    st.session_state.pop("comp_del_target", None)
+                    st.session_state.pop("_prev_saved_comp_row", None)
+                    st.rerun()
         else:
             st.info("등록된 Comp Set이 없습니다. 2번 탭에서 숙소를 선택해 등록하거나 위 입력란에 직접 경쟁 호스텔을 등록해 주세요.")
 
