@@ -708,20 +708,66 @@ with tab4:
             we_occ = float((we_df["예약상태"] == "마감/미노출").mean() * 100.0) if not we_df.empty else 85.0
 
             s1, s2, s3, s4 = st.columns(4)
-            s1.metric("평일(일~목) ADR", f"{wd_adr:,.0f} 원")
-            s2.metric("주말(금·토) ADR", f"{we_adr:,.0f} 원" + (" (추정)" if we_valid.empty and wd_adr > 0 else ""))
-            s3.metric("평일 마감률 (추정 OCC)", f"{wd_occ:.1f} %")
-            s4.metric("주말 마감률 (추정 OCC)", f"{we_occ:.1f} %")
+            s1.metric("전체 평균 평일(일~목) ADR", f"{wd_adr:,.0f} 원")
+            s2.metric("전체 평균 주말(금·토) ADR", f"{we_adr:,.0f} 원" + (" (추정)" if we_valid.empty and wd_adr > 0 else ""))
+            s3.metric("전체 평균 평일 마감률 (추정 OCC)", f"{wd_occ:.1f} %")
+            s4.metric("전체 평균 주말 마감률 (추정 OCC)", f"{we_occ:.1f} %")
 
-            if wd_adr > 0:
-                target_label = "도미토리(1인)" if captured_adults == 1 else "프라이빗룸(2인)"
-                if st.button(f"📌 위 평일·주말 ADR/OCC를 [5번 시뮬레이터 → {target_label}]에 즉시 반영"):
-                    prefix = "sim_dorm" if captured_adults == 1 else "sim_priv"
-                    st.session_state[f"{prefix}_wd_adr"] = int(round(wd_adr, -2))
-                    st.session_state[f"{prefix}_we_adr"] = int(round(we_adr, -2))
-                    st.session_state[f"{prefix}_wd_occ"] = int(min(98, max(30, round(wd_occ))))
-                    st.session_state[f"{prefix}_we_occ"] = int(min(98, max(30, round(we_occ))))
-                    st.success(f"{target_label} 평일·주말 단가 및 가동률이 5번 탭에 반영되었습니다.")
+            # 숙소별 개별 ADR / OCC 산출 테이블
+            st.markdown("#### 숙소별 평일 · 주말 ADR 및 추정 OCC 비교")
+            per_hotel_rows = []
+            for h_name, grp in snap_df.groupby("경쟁숙소", sort=False):
+                h_wd = grp[grp["요일구분"] == "평일(일~목)"]
+                h_we = grp[grp["요일구분"] == "주말(금·토)"]
+                h_wd_valid = h_wd["노출판매가(원)"].dropna()
+                h_we_valid = h_we["노출판매가(원)"].dropna()
+                h_wd_adr = float(h_wd_valid.mean()) if not h_wd_valid.empty else 0.0
+                h_we_adr = float(h_we_valid.mean()) if not h_we_valid.empty else (h_wd_adr * 1.35 if h_wd_adr > 0 else 0.0)
+                h_wd_occ = float((h_wd["예약상태"] == "마감/미노출").mean() * 100.0) if not h_wd.empty else 0.0
+                h_we_occ = float((h_we["예약상태"] == "마감/미노출").mean() * 100.0) if not h_we.empty else 0.0
+                open_cnt = int(grp["노출판매가(원)"].notna().sum())
+                per_hotel_rows.append({
+                    "경쟁숙소": h_name,
+                    "평일 ADR(원)": round(h_wd_adr) if h_wd_adr > 0 else None,
+                    "주말 ADR(원)": round(h_we_adr) if h_we_adr > 0 else None,
+                    "평일 추정 OCC(%)": round(h_wd_occ, 1),
+                    "주말 추정 OCC(%)": round(h_we_occ, 1),
+                    "판매노출일수": f"{open_cnt} / {len(grp)}일",
+                    "_wd_adr": h_wd_adr,
+                    "_we_adr": h_we_adr,
+                    "_wd_occ": h_wd_occ,
+                    "_we_occ": h_we_occ,
+                })
+            per_hotel_df = pd.DataFrame(per_hotel_rows)
+            disp_per_df = per_hotel_df[["경쟁숙소", "평일 ADR(원)", "주말 ADR(원)", "평일 추정 OCC(%)", "주말 추정 OCC(%)", "판매노출일수"]]
+            st.dataframe(
+                disp_per_df.style.format({"평일 ADR(원)": "{:,.0f}", "주말 ADR(원)": "{:,.0f}", "평일 추정 OCC(%)": "{:.1f}%", "주말 추정 OCC(%)": "{:.1f}%"}, na_rep="-"),
+                width="stretch",
+                hide_index=True,
+            )
+
+            target_label = "도미토리(1인)" if captured_adults == 1 else "프라이빗룸(2인)"
+            apply_options = ["전체 Comp Set 평균"] + [r["경쟁숙소"] for r in per_hotel_rows if r["_wd_adr"] > 0]
+            app_c1, app_c2 = st.columns([1.5, 2.5])
+            apply_source = app_c1.selectbox("5번 시뮬레이터 반영 기준", options=apply_options, key="comp_apply_source")
+            with app_c2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button(f"📌 [{apply_source}] 기준을 [5번 시뮬레이터 → {target_label}]에 즉시 반영", width="stretch"):
+                    if apply_source == "전체 Comp Set 평균":
+                        sel_wd_adr, sel_we_adr, sel_wd_occ, sel_we_occ = wd_adr, we_adr, wd_occ, we_occ
+                    else:
+                        picked = next(r for r in per_hotel_rows if r["경쟁숙소"] == apply_source)
+                        sel_wd_adr, sel_we_adr, sel_wd_occ, sel_we_occ = picked["_wd_adr"], picked["_we_adr"], picked["_wd_occ"], picked["_we_occ"]
+
+                    if sel_wd_adr > 0:
+                        prefix = "sim_dorm" if captured_adults == 1 else "sim_priv"
+                        st.session_state[f"{prefix}_wd_adr"] = int(round(sel_wd_adr, -2))
+                        st.session_state[f"{prefix}_we_adr"] = int(round(sel_we_adr, -2))
+                        st.session_state[f"{prefix}_wd_occ"] = int(min(98, max(30, round(sel_wd_occ))))
+                        st.session_state[f"{prefix}_we_occ"] = int(min(98, max(30, round(sel_we_occ))))
+                        st.success(f"[{apply_source}]의 {target_label} 평일·주말 단가 및 가동률이 5번 탭에 반영되었습니다.")
+                    else:
+                        st.warning("선택한 기준의 평일 유효 판매가가 없어 반영할 수 없습니다.")
 
             st.markdown("#### 체크인 일자별 판매가 매트릭스 (원)")
             pivot_df = snap_df.pivot(index="체크인일자", columns="경쟁숙소", values="노출판매가(원)")
