@@ -30,6 +30,10 @@ from db_manager import (
     load_historical_snapshots,
     upsert_comp_set_property,
 )
+from report_builder import (
+    build_full_excel_bytes,
+    build_printable_html_report,
+)
 
 load_dotenv()
 
@@ -183,6 +187,33 @@ search_radius = st.sidebar.select_slider(
 )
 
 run_btn = st.sidebar.button("🔍 입지 및 용도변경 스크리닝 실행", type="primary", width="stretch")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**📄 전체 검토 내용 저장 · 인쇄**")
+_sb_ar = st.session_state.get("analysis_result")
+_sb_comp = get_saved_comp_set()
+_sb_snap = st.session_state.get("latest_comp_snap")
+_sb_sim = st.session_state.get("latest_sim_summary")
+_sb_brk = st.session_state.get("latest_breakdown_df")
+_today_tag = datetime.date.today().strftime("%Y%m%d")
+
+st.sidebar.download_button(
+    label="📥 전체 내용 저장 (Excel)",
+    data=build_full_excel_bytes(_sb_ar, _sb_comp, _sb_snap, _sb_sim, _sb_brk),
+    file_name=f"서울_호스텔_전체검토_{_today_tag}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    width="stretch",
+    key="sidebar_download_excel",
+)
+st.sidebar.download_button(
+    label="🖨️ 전체 내용 인쇄 / PDF",
+    data=build_printable_html_report(_sb_ar, _sb_comp, _sb_snap, _sb_sim, _sb_brk).encode("utf-8"),
+    file_name=f"서울_호스텔_인쇄보고서_{_today_tag}.html",
+    mime="text/html",
+    width="stretch",
+    key="sidebar_download_print_html",
+    help="내려받은 파일을 열면 바로 '인쇄 / PDF로 저장' 버튼으로 출력할 수 있습니다.",
+)
 
 # ---------------------------------------------------------
 # 3. 메인 화면 실행 로직
@@ -974,43 +1005,35 @@ with tab5:
     }).set_index("항목")
     st.bar_chart(pnl_chart_df, height=260)
 
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        if "analysis_result" in st.session_state:
-            ar = st.session_state["analysis_result"]
-            titles_data = ar["bld_data"].get("title", [])
-            if titles_data:
-                pd.DataFrame([titles_data[0]]).to_excel(writer, sheet_name="01_건축물표제부", index=False)
-            if not ar.get("subway_df", pd.DataFrame()).empty:
-                ar["subway_df"].to_excel(writer, sheet_name="01_2_역세권분석", index=False)
-            if not ar["tour_df"].empty:
-                ar["tour_df"].to_excel(writer, sheet_name="02_관광공사POI", index=False)
-            if not ar["mois_df"].empty:
-                ar["mois_df"].to_excel(writer, sheet_name="03_행안부관광숙박", index=False)
-        if "latest_comp_snap" in st.session_state and not st.session_state["latest_comp_snap"].empty:
-            st.session_state["latest_comp_snap"].to_excel(writer, sheet_name="04_CompSet_가격캘린더", index=False)
+    sim_summary_dict = {
+        "임차면적(평)": lease_py,
+        "임대보증금(만원)": deposit_man,
+        "도미토리베드수": est_dorm_beds,
+        "프라이빗룸실수": est_priv_rooms,
+        "실판매가중평균ADR(원)": round(weighted_adr_krw, 0),
+        "통합OCC(%)": round(blended_occ_pct, 1),
+        "계절성보정계수": seasonality_factor,
+        "초기CAPEX(만원)": total_capex_man,
+        "월총매출(만원)": round(gross_monthly_rev_man, 1),
+        "월순매출_OTA차감후(만원)": round(net_monthly_rev_man, 1),
+        "월총운영비(만원)": round(total_monthly_opex_man, 1),
+        "월영업현금흐름_EBITDA(만원)": round(monthly_ebitda_man, 1),
+        "CAPEX회수기간(년)": round(payback_years, 2),
+        "BEP가동률(%)": round(bep_occ_pct, 1),
+    }
+    st.session_state["latest_sim_summary"] = sim_summary_dict
+    st.session_state["latest_breakdown_df"] = breakdown_df
 
-        breakdown_df.to_excel(writer, sheet_name="05_객실믹스_요일별매출", index=False)
-        pd.DataFrame([{
-            "임차면적(평)": lease_py,
-            "임대보증금(만원)": deposit_man,
-            "도미토리베드수": est_dorm_beds,
-            "프라이빗룸실수": est_priv_rooms,
-            "실판매가중평균ADR(원)": round(weighted_adr_krw, 0),
-            "통합OCC(%)": round(blended_occ_pct, 1),
-            "계절성보정계수": seasonality_factor,
-            "초기CAPEX(만원)": total_capex_man,
-            "월총매출(만원)": round(gross_monthly_rev_man, 1),
-            "월순매출_OTA차감후(만원)": round(net_monthly_rev_man, 1),
-            "월총운영비(만원)": round(total_monthly_opex_man, 1),
-            "월영업현금흐름_EBITDA(만원)": round(monthly_ebitda_man, 1),
-            "CAPEX회수기간(년)": round(payback_years, 2),
-            "BEP가동률(%)": round(bep_occ_pct, 1),
-        }]).to_excel(writer, sheet_name="06_임차수지총괄", index=False)
-
+    excel_bytes = build_full_excel_bytes(
+        st.session_state.get("analysis_result"),
+        get_saved_comp_set(),
+        st.session_state.get("latest_comp_snap"),
+        sim_summary_dict,
+        breakdown_df,
+    )
     st.download_button(
-        label="전체 분석 결과(건축물·역세권·상권·CompSet·객실믹스 수지) 엑셀(.xlsx) 다운로드",
-        data=output.getvalue(),
+        label="전체 분석 결과(1~5번 탭 통합) 엑셀(.xlsx) 다운로드",
+        data=excel_bytes,
         file_name=f"서울_호스텔_수지검토_{datetime.date.today().strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
