@@ -21,6 +21,8 @@ def compute_per_hotel_summary(snap_df: pd.DataFrame) -> pd.DataFrame:
         h_we_adr = float(h_we_valid.mean()) if not h_we_valid.empty else (h_wd_adr * 1.35 if h_wd_adr > 0 else 0.0)
         h_wd_occ = float((h_wd["예약상태"] == "마감/미노출").mean() * 100.0) if not h_wd.empty else 0.0
         h_we_occ = float((h_we["예약상태"] == "마감/미노출").mean() * 100.0) if not h_we.empty else 0.0
+        # 평일 평균가 대비 1.8배 이상 급등한 날은 잔여 객실이 거의 없는 '만실 임박' 상태로 간주
+        surge_cnt = int((grp["노출판매가(원)"].dropna() >= (h_wd_adr * 1.8)).sum()) if h_wd_adr > 0 else 0
         open_cnt = int(grp["노출판매가(원)"].notna().sum())
         row_dict = {"경쟁숙소": h_name}
         if adults_val is not None:
@@ -28,8 +30,9 @@ def compute_per_hotel_summary(snap_df: pd.DataFrame) -> pd.DataFrame:
         row_dict.update({
             "평일 ADR(원)": round(h_wd_adr) if h_wd_adr > 0 else None,
             "주말 ADR(원)": round(h_we_adr) if h_we_adr > 0 else None,
-            "평일 추정 OCC(%)": round(h_wd_occ, 1),
-            "주말 추정 OCC(%)": round(h_we_occ, 1),
+            "평일 전량마감률(%)": round(h_wd_occ, 1),
+            "주말 전량마감률(%)": round(h_we_occ, 1),
+            "만실임박(가격급등)": f"{surge_cnt}일" if surge_cnt > 0 else "-",
             "판매노출일수": f"{open_cnt} / {len(grp)}일",
         })
         rows.append(row_dict)

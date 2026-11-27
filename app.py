@@ -833,11 +833,12 @@ with tab4:
         else:
             snap_df = st.session_state["latest_comp_snap"]
 
-            st.markdown("#### 숙소별 · 인원 기준별(1인·2인·4인) ADR 및 추정 OCC 통합 비교")
+            st.markdown("#### 숙소별 · 인원 기준별(1인·2인·4인) ADR 및 전량마감률·만실임박 비교")
+            st.caption("💡 구글 호텔 공개 데이터는 잔여 객실 수(가동률)를 직접 공개하지 않으므로, **전량마감률(100% 품절일 비율)**과 평일 대비 1.8배 이상 요금이 치솟는 **만실임박(가격급등일)**을 함께 보여드립니다.")
             summary_all_df = compute_per_hotel_summary(snap_df)
             if not summary_all_df.empty:
                 st.dataframe(
-                    summary_all_df.style.format({"평일 ADR(원)": "{:,.0f}", "주말 ADR(원)": "{:,.0f}", "평일 추정 OCC(%)": "{:.1f}%", "주말 추정 OCC(%)": "{:.1f}%"}, na_rep="-"),
+                    summary_all_df.style.format({"평일 ADR(원)": "{:,.0f}", "주말 ADR(원)": "{:,.0f}", "평일 전량마감률(%)": "{:.1f}%", "주말 전량마감률(%)": "{:.1f}%"}, na_rep="-"),
                     width="stretch",
                     hide_index=True,
                 )
@@ -870,8 +871,11 @@ with tab4:
                             if a_wd > 0:
                                 st.session_state[f"{prefix}_wd_adr"] = int(round(a_wd, -2))
                                 st.session_state[f"{prefix}_we_adr"] = int(round(a_we, -2))
-                                st.session_state[f"{prefix}_wd_occ"] = int(min(98, max(30, round(o_wd))))
-                                st.session_state[f"{prefix}_we_occ"] = int(min(98, max(30, round(o_we))))
+                                # 전량마감률이 30% 미만(잔여객실이 1실 이상 남아있는 다객실 호텔 등)이면 기존 가동률 가정 유지
+                                if o_wd >= 30:
+                                    st.session_state[f"{prefix}_wd_occ"] = int(min(98, round(o_wd)))
+                                if o_we >= 30:
+                                    st.session_state[f"{prefix}_we_occ"] = int(min(98, round(o_we)))
                                 applied_parts.append(label)
                     if applied_parts:
                         st.success(f"[{apply_source}]의 {', '.join(applied_parts)} 단가·가동률이 5번 탭에 반영되었습니다.")
@@ -890,12 +894,13 @@ with tab4:
                         s1, s2, s3, s4 = st.columns(4)
                         s1.metric(f"{ad_cnt}인 평일(일~목) ADR", f"{m_wd_a:,.0f} 원")
                         s2.metric(f"{ad_cnt}인 주말(금·토) ADR", f"{m_we_a:,.0f} 원" + (" (추정)" if is_est else ""))
-                        s3.metric(f"{ad_cnt}인 평일 마감률 (추정 OCC)", f"{m_wd_o:.1f} %")
-                        s4.metric(f"{ad_cnt}인 주말 마감률 (추정 OCC)", f"{m_we_o:.1f} %")
+                        s3.metric(f"{ad_cnt}인 평일 전량마감률", f"{m_wd_o:.1f} %")
+                        s4.metric(f"{ad_cnt}인 주말 전량마감률", f"{m_we_o:.1f} %")
 
                         st.markdown(f"##### {ad_cnt}인 기준 체크인 일자별 판매가 매트릭스 (원)")
                         piv = sub_df.pivot(index="체크인일자", columns="경쟁숙소", values="노출판매가(원)")
-                        st.dataframe(piv.style.format("{:,.0f}", na_rep="마감/미노출"), width="stretch")
+                        piv = piv.apply(pd.to_numeric, errors="coerce")
+                        st.dataframe(piv.style.format("{:,.0f}", na_rep="매진/미판매"), width="stretch")
 
         with st.expander("📂 로컬 DB 누적 스냅샷 히스토리 (최근 30일)"):
             hist_df = load_historical_snapshots(30)
