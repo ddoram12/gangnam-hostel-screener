@@ -338,6 +338,18 @@ def fetch_tour_api_poi(lat: float, lng: float, radius: int, data_key: str) -> pd
     return pd.DataFrame(all_rows)
 
 
+def _request_mois_page_with_retry(url: str, params: dict, retries: int = 3) -> dict | None:
+    """행안부 API 일시 타임아웃/오류 대비 최대 3회 재시도합니다."""
+    for _ in range(retries):
+        try:
+            r = requests.get(url, params=params, timeout=20)
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            continue
+    return None
+
+
 @st.cache_data(ttl=3600)
 def fetch_mois_tourist_lodging(
     lat: float, lng: float, radius: int, data_key: str, sigungu_name: str = "", max_pages: int = 5
@@ -349,79 +361,76 @@ def fetch_mois_tourist_lodging(
     matched = []
     fetched_so_far = 0
     for page in range(1, max_pages + 1):
-        params = {"serviceKey": key, "pageNo": page, "numOfRows": 1000, "returnType": "json"}
+        params = {"serviceKey": key, "pageNo": page, "numOfRows": 200, "returnType": "json"}
         if sigungu_name:
             params["cond[ROAD_NM_ADDR::LIKE]"] = sigungu_name
-        try:
-            r = requests.get(url, params=params, timeout=15)
-            r.raise_for_status()
-            payload = r.json()
-            body = payload.get("response", {}).get("body", {}) or {}
-            total_count = int(body.get("totalCount") or 0)
-            items = (
-                body.get("items", {}).get("item")
-                or payload.get("body", {}).get("items")
-                or []
+        payload = _request_mois_page_with_retry(url, params)
+        if not payload:
+            break
+        body = payload.get("response", {}).get("body", {}) or {}
+        total_count = int(body.get("totalCount") or 0)
+        items = (
+            body.get("items", {}).get("item")
+            or payload.get("body", {}).get("items")
+            or []
+        )
+        items = ensure_list(items)
+        if not items:
+            break
+        fetched_so_far += len(items)
+        for it in items:
+            row = {k.upper(): v for k, v in it.items()}
+            status = str(
+                row.get("DTL_SALS_STTS_NM")
+                or row.get("SALS_STTS_NM")
+                or row.get("DTL_STAT_NM")
+                or row.get("TRD_STATE_NM")
+                or ""
             )
-            items = ensure_list(items)
-            if not items:
-                break
-            fetched_so_far += len(items)
-            for it in items:
-                row = {k.upper(): v for k, v in it.items()}
-                status = str(
-                    row.get("DTL_SALS_STTS_NM")
-                    or row.get("SALS_STTS_NM")
-                    or row.get("DTL_STAT_NM")
-                    or row.get("TRD_STATE_NM")
-                    or ""
-                )
-                if any(x in status for x in ["폐업", "취소", "말소", "휴업"]):
-                    continue
-                x_raw = row.get("X") or row.get("CRD_INFO_X")
-                y_raw = row.get("Y") or row.get("CRD_INFO_Y")
-                if not x_raw or not y_raw:
-                    continue
-                try:
-                    t_lng, t_lat = transformer.transform(float(x_raw), float(y_raw))
-                except Exception:
-                    continue
-                dist = haversine_m(lat, lng, t_lat, t_lng)
-                if dist <= radius:
-                    raw_rooms = row.get("GSRM_CNT")
-                    rooms_val = int(float(raw_rooms)) if raw_rooms not in (None, "", "0") else None
-                    raw_area = row.get("FCAR")
-                    area_val = round(float(raw_area), 1) if raw_area not in (None, "", "0") else None
-                    perm_date = str(row.get("LCPMT_YMD") or row.get("APV_PERM_YMD") or "").strip()
-                    matched.append({
-                        "사업장명": row.get("BPLC_NM", ""),
-                        "업태구분": (
-                            row.get("TOUR_LDGBIZ_DTL_NM")
-                            or row.get("CUL_PHY_ED_US_NM")
-                            or row.get("UPTAE_NM")
-                            or "관광숙박업"
-                        ),
-                        "영업상태": status or "영업",
-                        "영업시작일": perm_date,
-                        "객실수(실)": rooms_val,
-                        "시설면적(㎡)": area_val,
-                        "총층수": row.get("TOTAL_NOFL") or row.get("GRND_NOFL") or "",
-                        "도로명주소": (
-                            row.get("ROAD_NM_ADDR")
-                            or row.get("LOTNO_ADDR")
-                            or row.get("RDN_WHL_ADDR")
-                            or row.get("SITE_WHL_ADDR")
-                            or ""
-                        ),
-                        "거리(m)": round(dist, 1),
-                        "lat": t_lat,
-                        "lng": t_lng,
-                    })
-            if total_count > 0 and fetched_so_far >= total_count:
-                break
-            if total_count == 0 and len(items) < 100:
-                break
-        except Exception:
+            if any(x in status for x in ["폐업", "취소", "말소", "휴업"]):
+                continue
+            x_raw = row.get("X") or row.get("CRD_INFO_X")
+            y_raw = row.get("Y") or row.get("CRD_INFO_Y")
+            if not x_raw or not y_raw:
+                continue
+            try:
+                t_lng, t_lat = transformer.transform(float(x_raw), float(y_raw))
+            except Exception:
+                continue
+            dist = haversine_m(lat, lng, t_lat, t_lng)
+            if dist <= radius:
+                raw_rooms = row.get("GSRM_CNT")
+                rooms_val = int(float(raw_rooms)) if raw_rooms not in (None, "", "0") else None
+                raw_area = row.get("FCAR")
+                area_val = round(float(raw_area), 1) if raw_area not in (None, "", "0") else None
+                perm_date = str(row.get("LCPMT_YMD") or row.get("APV_PERM_YMD") or "").strip()
+                matched.append({
+                    "사업장명": row.get("BPLC_NM", ""),
+                    "업태구분": (
+                        row.get("TOUR_LDGBIZ_DTL_NM")
+                        or row.get("CUL_PHY_ED_US_NM")
+                        or row.get("UPTAE_NM")
+                        or "관광숙박업"
+                    ),
+                    "영업상태": status or "영업",
+                    "영업시작일": perm_date,
+                    "객실수(실)": rooms_val,
+                    "시설면적(㎡)": area_val,
+                    "총층수": row.get("TOTAL_NOFL") or row.get("GRND_NOFL") or "",
+                    "도로명주소": (
+                        row.get("ROAD_NM_ADDR")
+                        or row.get("LOTNO_ADDR")
+                        or row.get("RDN_WHL_ADDR")
+                        or row.get("SITE_WHL_ADDR")
+                        or ""
+                    ),
+                    "거리(m)": round(dist, 1),
+                    "lat": t_lat,
+                    "lng": t_lng,
+                })
+        if total_count > 0 and fetched_so_far >= total_count:
+            break
+        if total_count == 0 and len(items) < 100:
             break
     df = pd.DataFrame(matched)
     return df.sort_values("거리(m)").reset_index(drop=True) if not df.empty else df
@@ -438,61 +447,57 @@ def fetch_mois_general_lodging(
     matched = []
     fetched_so_far = 0
     for page in range(1, max_pages + 1):
-        params = {"serviceKey": key, "pageNo": page, "numOfRows": 1000, "returnType": "json"}
+        params = {"serviceKey": key, "pageNo": page, "numOfRows": 200, "returnType": "json"}
         if sigungu_name:
             params["cond[ROAD_NM_ADDR::LIKE]"] = sigungu_name
-        try:
-            r = requests.get(url, params=params, timeout=15)
-            if r.status_code != 200:
-                break
-            payload = r.json()
-            body = payload.get("response", {}).get("body", {}) or {}
-            total_count = int(body.get("totalCount") or 0)
-            items = (
-                body.get("items", {}).get("item")
-                or payload.get("body", {}).get("items")
-                or []
-            )
-            items = ensure_list(items)
-            if not items:
-                break
-            fetched_so_far += len(items)
-            for it in items:
-                row = {k.upper(): v for k, v in it.items()}
-                status = str(row.get("DTL_SALS_STTS_NM") or row.get("SALS_STTS_NM") or row.get("DTL_STAT_NM") or "")
-                if any(x in status for x in ["폐업", "취소", "말소", "휴업"]):
-                    continue
-                x_raw = row.get("X") or row.get("CRD_INFO_X")
-                y_raw = row.get("Y") or row.get("CRD_INFO_Y")
-                if not x_raw or not y_raw:
-                    continue
-                try:
-                    t_lng, t_lat = transformer.transform(float(x_raw), float(y_raw))
-                except Exception:
-                    continue
-                dist = haversine_m(lat, lng, t_lat, t_lng)
-                if dist <= radius:
-                    w_cnt = int(float(row.get("WSRM_CNT") or row.get("WEST_ROOM_CNT") or 0))
-                    k_cnt = int(float(row.get("KSRM_CNT") or row.get("KOR_ROOM_CNT") or 0))
-                    g_cnt = int(float(row.get("GSRM_CNT") or 0))
-                    total_rooms = g_cnt if g_cnt > 0 else (w_cnt + k_cnt if (w_cnt + k_cnt) > 0 else None)
-                    perm_date = str(row.get("LCPMT_YMD") or row.get("APV_PERM_YMD") or "").strip()
-                    matched.append({
-                        "사업장명": row.get("BPLC_NM", ""),
-                        "업태구분": row.get("BZSTAT_SE_NM") or row.get("UPTAE_NM") or "일반숙박업",
-                        "영업상태": status or "영업",
-                        "영업시작일": perm_date,
-                        "객실수(실)": total_rooms,
-                        "도로명주소": row.get("ROAD_NM_ADDR") or row.get("LOTNO_ADDR") or "",
-                        "거리(m)": round(dist, 1),
-                        "lat": t_lat,
-                        "lng": t_lng,
-                    })
-            if total_count > 0 and fetched_so_far >= total_count:
-                break
-            if total_count == 0 and len(items) < 100:
-                break
-        except Exception:
+        payload = _request_mois_page_with_retry(url, params)
+        if not payload:
+            break
+        body = payload.get("response", {}).get("body", {}) or {}
+        total_count = int(body.get("totalCount") or 0)
+        items = (
+            body.get("items", {}).get("item")
+            or payload.get("body", {}).get("items")
+            or []
+        )
+        items = ensure_list(items)
+        if not items:
+            break
+        fetched_so_far += len(items)
+        for it in items:
+            row = {k.upper(): v for k, v in it.items()}
+            status = str(row.get("DTL_SALS_STTS_NM") or row.get("SALS_STTS_NM") or row.get("DTL_STAT_NM") or "")
+            if any(x in status for x in ["폐업", "취소", "말소", "휴업"]):
+                continue
+            x_raw = row.get("X") or row.get("CRD_INFO_X")
+            y_raw = row.get("Y") or row.get("CRD_INFO_Y")
+            if not x_raw or not y_raw:
+                continue
+            try:
+                t_lng, t_lat = transformer.transform(float(x_raw), float(y_raw))
+            except Exception:
+                continue
+            dist = haversine_m(lat, lng, t_lat, t_lng)
+            if dist <= radius:
+                w_cnt = int(float(row.get("WSRM_CNT") or row.get("WEST_ROOM_CNT") or 0))
+                k_cnt = int(float(row.get("KSRM_CNT") or row.get("KOR_ROOM_CNT") or 0))
+                g_cnt = int(float(row.get("GSRM_CNT") or 0))
+                total_rooms = g_cnt if g_cnt > 0 else (w_cnt + k_cnt if (w_cnt + k_cnt) > 0 else None)
+                perm_date = str(row.get("LCPMT_YMD") or row.get("APV_PERM_YMD") or "").strip()
+                matched.append({
+                    "사업장명": row.get("BPLC_NM", ""),
+                    "업태구분": row.get("BZSTAT_SE_NM") or row.get("UPTAE_NM") or "일반숙박업",
+                    "영업상태": status or "영업",
+                    "영업시작일": perm_date,
+                    "객실수(실)": total_rooms,
+                    "도로명주소": row.get("ROAD_NM_ADDR") or row.get("LOTNO_ADDR") or "",
+                    "거리(m)": round(dist, 1),
+                    "lat": t_lat,
+                    "lng": t_lng,
+                })
+        if total_count > 0 and fetched_so_far >= total_count:
+            break
+        if total_count == 0 and len(items) < 100:
             break
     df = pd.DataFrame(matched)
     return df.sort_values("거리(m)").reset_index(drop=True) if not df.empty else df

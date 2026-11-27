@@ -241,12 +241,21 @@ if run_btn:
             subway_df = fetch_kakao_subway(geo["lat"], geo["lng"], kakao_api_key, radius=search_radius)
             bld_data = fetch_building_hub(geo, data_go_key)
             tour_df = fetch_tour_api_poi(geo["lat"], geo["lng"], search_radius, data_go_key)
-            sigungu_tokens = [tok for tok in str(geo.get("address_name", "")).split() if tok.endswith(("구", "시", "군"))]
-            sigungu_name = next((t for t in sigungu_tokens if t.endswith("구")), sigungu_tokens[0] if sigungu_tokens else "")
-            mois_df = fetch_mois_tourist_lodging(geo["lat"], geo["lng"], search_radius, data_go_key, sigungu_name=sigungu_name)
-            mois_gen_df = fetch_mois_general_lodging(geo["lat"], geo["lng"], search_radius, data_go_key, sigungu_name=sigungu_name)
             kakao_lodging_df = fetch_kakao_lodging(geo["lat"], geo["lng"], kakao_api_key, radius=search_radius)
             kakao_lodging_df = enrich_lodging_building_info(kakao_lodging_df, kakao_api_key, data_go_key, limit=15)
+
+            gu_candidates = []
+            for addr_str in [geo.get("address_name", "")] + (kakao_lodging_df["주소"].dropna().tolist() if not kakao_lodging_df.empty else []):
+                for tok in str(addr_str).split():
+                    if tok.endswith("구") and tok not in gu_candidates:
+                        gu_candidates.append(tok)
+            if not gu_candidates:
+                gu_candidates = [""]
+
+            mois_t_list = [fetch_mois_tourist_lodging(geo["lat"], geo["lng"], search_radius, data_go_key, sigungu_name=g) for g in gu_candidates[:3]]
+            mois_g_list = [fetch_mois_general_lodging(geo["lat"], geo["lng"], search_radius, data_go_key, sigungu_name=g) for g in gu_candidates[:3]]
+            mois_df = pd.concat([d for d in mois_t_list if not d.empty], ignore_index=True) if any(not d.empty for d in mois_t_list) else pd.DataFrame()
+            mois_gen_df = pd.concat([d for d in mois_g_list if not d.empty], ignore_index=True) if any(not d.empty for d in mois_g_list) else pd.DataFrame()
 
             st.session_state["analysis_result"] = {
                 "geo": geo,
