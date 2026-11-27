@@ -68,9 +68,6 @@ def build_full_excel_bytes(
             mois_t = analysis_result.get("mois_df", pd.DataFrame())
             mois_g = analysis_result.get("mois_gen_df", pd.DataFrame())
             mois_all = pd.concat([d for d in (mois_t, mois_g) if not d.empty], ignore_index=True) if (not mois_t.empty or not mois_g.empty) else pd.DataFrame()
-        if not mois_all.empty:
-            mois_all["_dk"] = mois_all["사업장명"].astype(str).str.replace(" ", "", regex=False).str.lower()
-            mois_all = mois_all.sort_values("거리(m)").drop_duplicates(subset=["_dk"], keep="first").drop(columns=["_dk"])
             if not mois_all.empty:
                 mois_all["_dk"] = mois_all["사업장명"].astype(str).str.replace(" ", "", regex=False).str.lower()
                 mois_all = mois_all.sort_values("거리(m)").drop_duplicates(subset=["_dk"], keep="first").drop(columns=["_dk"])
