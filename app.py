@@ -362,6 +362,7 @@ else:
                 st.dataframe(poi_non_lodging[["명칭", "카테고리", "거리(m)", "주소"]], width="stretch", hide_index=True, height=280)
         with col_t2:
             st.markdown("#### 반경 내 숙박업소 목록 (Comp Set 후보 발굴용)")
+            st.caption("💡 아래 표에서 원하는 숙소 행(또는 왼쪽 체크박스)을 클릭하면 하단 Comp Set 후보 선택창에 자동으로 담깁니다.")
             sub_b, sub_a = st.tabs(["카카오 로컬 전체 숙박(AD5)", "행안부 인허가 전체 (관광+일반숙박)"])
 
             def _norm_addr(raw: str) -> str:
@@ -390,10 +391,11 @@ else:
                     if raw_addr:
                         mois_addr_map[raw_addr] = meta
 
+            table_picked = []
             with sub_b:
                 if not kakao_lodging_df.empty:
                     from api_clients import haversine_m
-                    k_disp = kakao_lodging_df.copy()
+                    k_disp = kakao_lodging_df.copy().reset_index(drop=True)
                     matched_dates, matched_rooms = [], []
                     for _, kr in k_disp.iterrows():
                         kn = str(kr["업소명"]).replace(" ", "").lower()
@@ -421,12 +423,18 @@ else:
                         c for c in ["업소명", "세부분류", "거리(m)", "영업시작일(인허가)", "객실수", "준공년월", "건물규모", "주소"]
                         if c in k_disp.columns
                     ]
-                    st.dataframe(
+                    k_event = st.dataframe(
                         k_disp[disp_cols],
                         width="stretch",
                         hide_index=True,
                         height=300,
+                        on_select="rerun",
+                        selection_mode="multi-row",
+                        key="kakao_lodging_table",
                     )
+                    for row_idx in k_event.selection.rows:
+                        if row_idx < len(k_disp):
+                            table_picked.append(str(k_disp.loc[row_idx, "업소명"]).strip())
                 else:
                     st.info("반경 내 카카오 로컬 숙박업소 조회 결과가 없습니다.")
 
@@ -434,18 +442,34 @@ else:
                 if not mois_all_df.empty:
                     mois_all_sorted = mois_all_df.sort_values("거리(m)").reset_index(drop=True)
                     mois_cols = [c for c in ["사업장명", "업태구분", "영업시작일", "객실수(실)", "시설면적(㎡)", "총층수", "거리(m)", "도로명주소"] if c in mois_all_sorted.columns]
-                    st.dataframe(mois_all_sorted[mois_cols], width="stretch", hide_index=True, height=300)
+                    m_event = st.dataframe(
+                        mois_all_sorted[mois_cols],
+                        width="stretch",
+                        hide_index=True,
+                        height=300,
+                        on_select="rerun",
+                        selection_mode="multi-row",
+                        key="mois_lodging_table",
+                    )
+                    for row_idx in m_event.selection.rows:
+                        if row_idx < len(mois_all_sorted):
+                            table_picked.append(str(mois_all_sorted.loc[row_idx, "사업장명"]).strip())
                 else:
                     st.info("반경 내 행안부 인허가 숙박업소 조회 결과가 없습니다.")
 
             # Comp Set 후보 선택 -> OTA 평점 조회 & 4번 탭 바로 등록
             st.markdown("##### 🎯 Comp Set 후보 OTA 평점 확인 및 4번 탭 바로 등록")
             cand_list = []
-            if not mois_df.empty:
-                cand_list.extend(mois_df["사업장명"].dropna().tolist())
+            if not mois_all_df.empty:
+                cand_list.extend(mois_all_df["사업장명"].dropna().tolist())
             if not kakao_lodging_df.empty:
                 cand_list.extend(kakao_lodging_df["업소명"].dropna().tolist())
             cand_options = list(dict.fromkeys([c.strip() for c in cand_list if str(c).strip()]))
+
+            table_picked_unique = list(dict.fromkeys([p for p in table_picked if p in cand_options]))
+            if st.session_state.get("_prev_table_picked") != table_picked_unique:
+                st.session_state["_prev_table_picked"] = table_picked_unique
+                st.session_state["tab2_comp_candidates"] = table_picked_unique
 
             if cand_options:
                 selected_cands = st.multiselect(
