@@ -34,7 +34,7 @@ from db_manager import (
 load_dotenv()
 
 st.set_page_config(
-    page_title="강남 호스텔 입지·CompSet·수지 스크리너",
+    page_title="서울 호스텔 시장조사 및 수지검토",
     page_icon="🏨",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -133,7 +133,7 @@ def evaluate_zoning_for_hostel(zoning_names: list[str]) -> tuple[str, str]:
     if any(k in joined for k in ["중심상업", "일반상업", "근린상업", "유통상업"]):
         return "success", "🟢 **상업지역 등재:** 호스텔(숙박시설) 용도변경에 가장 유리한 용도지역입니다. (단, 반경 200m 학교 및 지구단위계획 별도 확인 필요)"
     if "준주거" in joined:
-        return "warning", "🟡 **준주거지역 등재:** 조건부 용도변경 검토가 필요합니다. (연접 도로 폭, 주거지 이격거리 및 강남구 지구단위계획 확인 필수)"
+        return "warning", "🟡 **준주거지역 등재:** 조건부 용도변경 검토가 필요합니다. (연접 도로 폭, 주거지 이격거리 및 관할 구청 지구단위계획 확인 필수)"
     if any(k in joined for k in ["일반주거", "전용주거"]):
         return "error", "🔴 **주거지역 등재 (주의):** 원칙적으로 일반 숙박시설 설치가 제한됩니다. 관광진흥법상 호스텔업 특례(도로 접도 요건 등) 적용 가능 여부를 지자체에 사전 확인해야 합니다."
     return "info", "📌 **용도지역 확인 필요:** 등재된 지역·지구 내 숙박시설 허용 여부를 건축사/구청 건축과에 사전 확인하세요."
@@ -165,23 +165,17 @@ serpapi_key = get_secret("SERPAPI_KEY")
 
 st.sidebar.markdown("""
 <div class="sidebar-brand">
-    <b>🏨 강남 호스텔 시장조사</b><br>
-    임차 컨버전 입지·경쟁·수지 통합 분석
+    <b>🏨 서울 호스텔 시장조사 및 수지검토</b><br>
+    서울 전역 임차 컨버전 입지·경쟁·수지 통합 분석
 </div>
 """, unsafe_allow_html=True)
 
 st.sidebar.header("📍 후보 건물 및 분석 반경")
-GANGNAM_PRESETS = {
-    "직접 입력": "",
-    "논현동 (신논현·강남역 상권)": "서울특별시 강남구 논현동 201-6",
-    "역삼동 (강남·역삼역 오피스)": "서울특별시 강남구 역삼동 823-24",
-    "삼성동 (코엑스·MICE 상권)": "서울특별시 강남구 삼성동 159",
-    "신사동 (가로수길·신사역 상권)": "서울특별시 강남구 신사동 535-15",
-}
-preset_choice = st.sidebar.selectbox("강남권 샘플 후보지 빠른 선택", options=list(GANGNAM_PRESETS.keys()), index=1)
-default_addr = GANGNAM_PRESETS[preset_choice] if preset_choice != "직접 입력" else "서울특별시 강남구 논현동 201-6"
-
-target_address = st.sidebar.text_input("후보 건물 지번/도로명 주소", value=default_addr)
+target_address = st.sidebar.text_input(
+    "후보 건물 지번/도로명 주소",
+    value="",
+    placeholder="예: 서울특별시 중구 명동2가 54-2",
+)
 search_radius = st.sidebar.select_slider(
     "상권 분석 반경 (m)",
     options=[300, 500, 800, 1000, 1500],
@@ -195,12 +189,15 @@ run_btn = st.sidebar.button("🔍 입지 및 용도변경 스크리닝 실행", 
 # ---------------------------------------------------------
 st.markdown("""
 <div class="hero-banner">
-    <h1>🏨 강남 호스텔 임차 컨버전 입지 · CompSet · 수지 스크리너</h1>
-    <p>건축물대장 용도변경 적격성 + 역세권·관광 POI + Google Hotels Comp Set ADR·OCC + 마스터리스 Payback 시뮬레이터</p>
+    <h1>🏨 서울 호스텔 시장조사 및 수지검토</h1>
+    <p>서울 전역 건축물대장 용도변경 적격성 + 역세권·관광 POI + Google Hotels Comp Set ADR·OCC + 마스터리스 Payback 시뮬레이터</p>
 </div>
 """, unsafe_allow_html=True)
 
 if run_btn:
+    if not target_address.strip():
+        st.warning("좌측 입력란에 조사할 후보 건물의 지번 또는 도로명 주소를 입력해 주세요.")
+        st.stop()
     if not data_go_key or not kakao_api_key:
         st.error("API 키가 설정되지 않았습니다. 로컬 `.env` 또는 클라우드 `Secrets` 설정을 확인해 주세요.")
         st.stop()
@@ -284,7 +281,7 @@ else:
         c4.metric("정화조 처리용량", f"{septic_capa:,} 인" if septic_capa > 0 else "하수직결/미등재")
         c5.metric("반경 200m 내 학교", f"{len(schools_200m)} 개소")
 
-        st.markdown("#### 임차 용도변경 사전 Red Flag & 강남권 용도지역 체크")
+        st.markdown("#### 임차 용도변경 사전 Red Flag & 용도지역 적합도 체크")
         if vltn_yn == "1":
             st.error("🚨 **[치명적 리스크] 위반건축물 등재 건물입니다.** 원상복구 전까지 숙박시설 용도변경 인허가가 불허됩니다.")
         else:
@@ -647,7 +644,7 @@ with tab4:
     st.caption("1인 기준(도미토리)과 2인 기준(프라이빗룸)을 각각 수집해 5번 시뮬레이터의 평일·주말 변수로 분리 주입할 수 있습니다.")
 
     with st.expander("➕ Comp Set 경쟁 호스텔 추가 / 삭제 관리", expanded=True):
-        st.caption("💡 강남권 예시 검색어: `야자 강남`, `오클라우드 호텔 강남`, `신라스테이 역삼`, `게스트하우스 강남` 등 Google Hotels에 등록된 실제 상호를 입력하세요.")
+        st.caption("💡 서울권 예시 검색어: `위코스테이 명동`, `오클라우드 호텔 강남`, `신라스테이 역삼`, `나인트리 명동` 등 Google Hotels에 등록된 실제 상호를 입력하세요.")
         c_add1, c_add2, c_add3 = st.columns([2, 2, 1])
         new_hotel_name = c_add1.text_input("경쟁 호스텔명", key="new_comp_name")
         new_hotel_note = c_add2.text_input("비고 (예: 도미토리 주력, 신축 컨버전 등)", key="new_comp_note")
@@ -1014,6 +1011,6 @@ with tab5:
     st.download_button(
         label="전체 분석 결과(건축물·역세권·상권·CompSet·객실믹스 수지) 엑셀(.xlsx) 다운로드",
         data=output.getvalue(),
-        file_name=f"강남_호스텔_정밀수지분석_{datetime.date.today().strftime('%Y%m%d')}.xlsx",
+        file_name=f"서울_호스텔_수지검토_{datetime.date.today().strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
