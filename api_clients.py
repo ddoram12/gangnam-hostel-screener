@@ -584,7 +584,7 @@ def resolve_google_hotel_token(hotel_query: str, serpapi_key: str, region_hint: 
     return summary["property_token"], summary["resolved_title"]
 
 
-def discover_google_hotels_nearby(region_query: str, serpapi_key: str, max_results: int = 12) -> list[dict]:
+def discover_google_hotels_nearby(region_query: str, serpapi_key: str, max_results: int = 18) -> list[dict]:
     """지역/상권 키워드로 Google Hotels에 실제 등록된 추적 가능 숙소 목록을 조회합니다."""
     today = datetime.date.today()
     params = {
@@ -608,8 +608,12 @@ def discover_google_hotels_nearby(region_query: str, serpapi_key: str, max_resul
             continue
         rate_info = p.get("rate_per_night") or {}
         rate_val = extract_nightly_price(rate_info) if isinstance(rate_info, dict) else None
+        raw_type = str(p.get("type") or "").lower()
+        is_rental = "vacation" in raw_type or "rental" in raw_type
         results.append({
             "숙소명": p.get("name", ""),
+            "숙소유형": "독채/공유숙박(1실)" if is_rental else "호텔/호스텔",
+            "is_rental": is_rental,
             "property_token": token,
             "OTA평점": p.get("overall_rating"),
             "리뷰수": p.get("reviews"),

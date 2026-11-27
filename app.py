@@ -722,36 +722,75 @@ with tab4:
 
         if st.session_state.get("discovered_gh_list"):
             disc_list = st.session_state["discovered_gh_list"]
-            disc_df = pd.DataFrame(disc_list)[["숙소명", "OTA평점", "리뷰수", "참고1박가(원)"]]
-            st.caption("💡 아래 표에서 원하는 숙소 행(또는 왼쪽 체크박스)을 클릭하면 하단 선택창에 자동으로 담깁니다.")
-            disc_event = st.dataframe(
-                disc_df,
-                width="stretch",
-                hide_index=True,
-                on_select="rerun",
-                selection_mode="multi-row",
-                key="disc_gh_table",
-            )
-            disc_table_picked = [
-                str(disc_df.iloc[idx]["숙소명"])
-                for idx in disc_event.selection.rows
-                if idx < len(disc_df)
-            ]
-            if st.session_state.get("_prev_disc_picked") != disc_table_picked:
-                st.session_state["_prev_disc_picked"] = disc_table_picked
-                st.session_state["picked_disc_hotels"] = disc_table_picked
+            exclude_rentals = st.checkbox("1실 독채/공유숙박 제외 (호텔·호스텔만 보기)", value=True, key="chk_exclude_rentals")
 
-            picked_disc = st.multiselect("Comp Set으로 등록할 숙소 선택", options=[d["숙소명"] for d in disc_list], key="picked_disc_hotels")
-            if st.button("➕ 선택한 숙소 즉시 Comp Set 등록 (추가 API 소모 없음)", type="primary", key="btn_reg_disc"):
-                if not picked_disc:
-                    st.warning("등록할 숙소를 먼저 선택해 주세요.")
+            # 2번 탭 행안부 인허가 데이터와 매칭해 실제 객실수(실) 보강
+            room_lookup = {}
+            if "analysis_result" in st.session_state:
+                ar_disc = st.session_state["analysis_result"]
+                for src_d in (ar_disc.get("mois_df", pd.DataFrame()), ar_disc.get("mois_gen_df", pd.DataFrame())):
+                    if not src_d.empty:
+                        for _, mr in src_d.iterrows():
+                            r_cnt = mr.get("객실수(실)")
+                            if pd.notna(r_cnt) and r_cnt:
+                                rk = str(mr["사업장명"]).replace(" ", "").lower()
+                                room_lookup[rk] = int(r_cnt)
+
+            enriched_disc = []
+            for d in disc_list:
+                is_r = d.get("is_rental", False)
+                if exclude_rentals and is_r:
+                    continue
+                dk = str(d["숙소명"]).replace(" ", "").lower()
+                matched_r = room_lookup.get(dk) or next((v for k, v in room_lookup.items() if k and (k in dk or dk in k)), None)
+                if matched_r:
+                    room_str = f"{matched_r}실"
+                elif is_r:
+                    room_str = "1실(독채)"
                 else:
-                    for d_item in disc_list:
-                        if d_item["숙소명"] in picked_disc:
-                            note_s = f"평점:{d_item['OTA평점'] or '-'} / 리뷰:{d_item['리뷰수'] or '-'}"
-                            upsert_comp_set_property(d_item["숙소명"], d_item["property_token"], d_item["숙소명"], note_s)
-                    st.success(f"✅ {len(picked_disc)}개 숙소가 등록되었습니다!")
-                    st.rerun()
+                    room_str = "다객실(미확인)"
+                enriched_disc.append({
+                    "숙소명": d["숙소명"],
+                    "숙소유형": d.get("숙소유형", "호텔/호스텔"),
+                    "객실수": room_str,
+                    "OTA평점": d.get("OTA평점"),
+                    "리뷰수": d.get("리뷰수"),
+                    "참고1박가(원)": d.get("참고1박가(원)"),
+                })
+
+            if not enriched_disc:
+                st.info("표시할 호텔/호스텔이 없습니다. 위 체크박스를 해제하면 공유숙박도 함께 볼 수 있습니다.")
+            else:
+                disc_df = pd.DataFrame(enriched_disc)
+                st.caption("💡 아래 표에서 원하는 숙소 행(또는 왼쪽 체크박스)을 클릭하면 하단 선택창에 자동으로 담깁니다.")
+                disc_event = st.dataframe(
+                    disc_df,
+                    width="stretch",
+                    hide_index=True,
+                    on_select="rerun",
+                    selection_mode="multi-row",
+                    key="disc_gh_table",
+                )
+                disc_table_picked = [
+                    str(disc_df.iloc[idx]["숙소명"])
+                    for idx in disc_event.selection.rows
+                    if idx < len(disc_df)
+                ]
+                if st.session_state.get("_prev_disc_picked") != disc_table_picked:
+                    st.session_state["_prev_disc_picked"] = disc_table_picked
+                    st.session_state["picked_disc_hotels"] = disc_table_picked
+
+                picked_disc = st.multiselect("Comp Set으로 등록할 숙소 선택", options=[d["숙소명"] for d in enriched_disc], key="picked_disc_hotels")
+                if st.button("➕ 선택한 숙소 즉시 Comp Set 등록 (추가 API 소모 없음)", type="primary", key="btn_reg_disc"):
+                    if not picked_disc:
+                        st.warning("등록할 숙소를 먼저 선택해 주세요.")
+                    else:
+                        for d_item in disc_list:
+                            if d_item["숙소명"] in picked_disc:
+                                note_s = f"{d_item.get('숙소유형', '')} / 평점:{d_item['OTA평점'] or '-'} / 리뷰:{d_item['리뷰수'] or '-'}"
+                                upsert_comp_set_property(d_item["숙소명"], d_item["property_token"], d_item["숙소명"], note_s)
+                        st.success(f"✅ {len(picked_disc)}개 숙소가 등록되었습니다!")
+                        st.rerun()
 
     with st.expander("➕ Comp Set 경쟁 호스텔 추가 / 삭제 관리", expanded=True):
         st.caption("💡 서울권 예시 검색어: `위코스테이 명동`, `오클라우드 호텔 강남`, `신라스테이 역삼`, `나인트리 명동` 등 Google Hotels에 등록된 실제 상호를 입력하세요.")
