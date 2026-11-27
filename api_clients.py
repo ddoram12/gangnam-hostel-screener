@@ -236,24 +236,28 @@ def _fetch_single_lodging_building(addr: str, kakao_key: str, data_key: str) -> 
             "_type": "json",
         }
         url = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
-        for _ in range(2):
-            try:
-                r = requests.get(url, params=params, timeout=10)
-                r.raise_for_status()
-                items = ensure_list(r.json().get("response", {}).get("body", {}).get("items", {}).get("item"))
-                if not items:
-                    return empty
-                t = items[0]
-                apr = str(t.get("useAprDay") or "").strip()
-                apr_fmt = f"{apr[:4]}-{apr[4:6]}" if len(apr) >= 6 and apr[:6].isdigit() else (apr or "-")
-                flr = t.get("grndFlrCnt") or "-"
-                area_sqm = float(t.get("totArea") or 0)
-                area_py = round(area_sqm * 0.3025) if area_sqm > 0 else 0
-                scale_str = f"{flr}층 · {area_py:,}평" if area_py > 0 else f"{flr}층"
-                purps = str(t.get("mainPurpsCdNm") or "-")
-                return {"준공년월": apr_fmt, "건물규모": scale_str, "건물용도": purps}
-            except Exception:
-                continue
+        recap_url = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrRecapTitleInfo"
+        for ep_url in (url, recap_url):
+            for _ in range(2):
+                try:
+                    r = requests.get(ep_url, params=params, timeout=10)
+                    r.raise_for_status()
+                    items = ensure_list(r.json().get("response", {}).get("body", {}).get("items", {}).get("item"))
+                    if not items:
+                        break
+                    t = max(items, key=lambda x: float(x.get("totArea") or 0))
+                    apr = str(t.get("useAprDay") or "").strip()
+                    apr_fmt = f"{apr[:4]}-{apr[4:6]}" if len(apr) >= 6 and apr[:6].isdigit() else (apr or "-")
+                    flr = t.get("grndFlrCnt") or "-"
+                    area_sqm = float(t.get("totArea") or 0)
+                    area_py = round(area_sqm * 0.3025) if area_sqm > 0 else 0
+                    if area_py == 0 and apr_fmt == "-":
+                        break
+                    scale_str = f"{flr}층 · {area_py:,}평" if area_py > 0 else f"{flr}층"
+                    purps = str(t.get("mainPurpsCdNm") or "-")
+                    return {"준공년월": apr_fmt, "건물규모": scale_str, "건물용도": purps}
+                except Exception:
+                    continue
     except Exception:
         pass
     return empty
@@ -343,6 +347,7 @@ def fetch_mois_tourist_lodging(
     key = normalize_service_key(data_key)
     transformer = get_tm_to_wgs84_transformer()
     matched = []
+    fetched_so_far = 0
     for page in range(1, max_pages + 1):
         params = {"serviceKey": key, "pageNo": page, "numOfRows": 1000, "returnType": "json"}
         if sigungu_name:
@@ -351,14 +356,17 @@ def fetch_mois_tourist_lodging(
             r = requests.get(url, params=params, timeout=15)
             r.raise_for_status()
             payload = r.json()
+            body = payload.get("response", {}).get("body", {}) or {}
+            total_count = int(body.get("totalCount") or 0)
             items = (
-                payload.get("response", {}).get("body", {}).get("items", {}).get("item")
+                body.get("items", {}).get("item")
                 or payload.get("body", {}).get("items")
                 or []
             )
             items = ensure_list(items)
             if not items:
                 break
+            fetched_so_far += len(items)
             for it in items:
                 row = {k.upper(): v for k, v in it.items()}
                 status = str(
@@ -409,7 +417,9 @@ def fetch_mois_tourist_lodging(
                         "lat": t_lat,
                         "lng": t_lng,
                     })
-            if len(items) < 1000:
+            if total_count > 0 and fetched_so_far >= total_count:
+                break
+            if total_count == 0 and len(items) < 100:
                 break
         except Exception:
             break
@@ -426,6 +436,7 @@ def fetch_mois_general_lodging(
     key = normalize_service_key(data_key)
     transformer = get_tm_to_wgs84_transformer()
     matched = []
+    fetched_so_far = 0
     for page in range(1, max_pages + 1):
         params = {"serviceKey": key, "pageNo": page, "numOfRows": 1000, "returnType": "json"}
         if sigungu_name:
@@ -435,14 +446,17 @@ def fetch_mois_general_lodging(
             if r.status_code != 200:
                 break
             payload = r.json()
+            body = payload.get("response", {}).get("body", {}) or {}
+            total_count = int(body.get("totalCount") or 0)
             items = (
-                payload.get("response", {}).get("body", {}).get("items", {}).get("item")
+                body.get("items", {}).get("item")
                 or payload.get("body", {}).get("items")
                 or []
             )
             items = ensure_list(items)
             if not items:
                 break
+            fetched_so_far += len(items)
             for it in items:
                 row = {k.upper(): v for k, v in it.items()}
                 status = str(row.get("DTL_SALS_STTS_NM") or row.get("SALS_STTS_NM") or row.get("DTL_STAT_NM") or "")
@@ -474,7 +488,9 @@ def fetch_mois_general_lodging(
                         "lat": t_lat,
                         "lng": t_lng,
                     })
-            if len(items) < 1000:
+            if total_count > 0 and fetched_so_far >= total_count:
+                break
+            if total_count == 0 and len(items) < 100:
                 break
         except Exception:
             break
