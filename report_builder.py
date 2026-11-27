@@ -40,6 +40,14 @@ def build_full_excel_bytes(
     """1~5번 탭 전체 검토 내용을 하나의 통합 엑셀(.xlsx) 바이트로 생성합니다."""
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        meta_row = {
+            "보고서작성일": datetime.date.today().strftime("%Y-%m-%d"),
+            "후보건물주소": (analysis_result or {}).get("geo", {}).get("address_name", "미조회 (스크리닝 실행 전)"),
+            "등록된CompSet수": len(comp_df) if comp_df is not None else 0,
+            "수지시뮬레이션포함": "예" if sim_summary else "아니오 (5번 탭 확인 후 재저장)",
+        }
+        pd.DataFrame([meta_row]).to_excel(writer, sheet_name="00_검토개요", index=False)
+
         if analysis_result:
             bld_data = analysis_result.get("bld_data", {})
             titles_data = bld_data.get("title", [])
