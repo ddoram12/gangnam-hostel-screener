@@ -34,6 +34,7 @@ from db_manager import (
 from report_builder import (
     build_full_excel_bytes,
     build_printable_html_report,
+    compute_per_hotel_summary,
 )
 
 load_dotenv()
@@ -791,17 +792,12 @@ with tab4:
 
     if not saved_comp_df.empty:
         st.markdown("---")
-        col_run1, col_run2, col_run3 = st.columns([1.5, 1.5, 2])
+        col_run1, col_run3 = st.columns([1.5, 3.5])
         track_days = col_run1.selectbox("향후 조회 기간", options=[14, 21, 30], index=1, format_func=lambda x: f"향후 {x}일")
-        guest_type = col_run2.selectbox(
-            "객실 단가 기준 (인원)",
-            options=[1, 2],
-            format_func=lambda x: "1인 기준 (도미토리 베드)" if x == 1 else "2인 기준 (프라이빗 더블룸)",
-        )
         with col_run3:
             st.markdown("<br>", unsafe_allow_html=True)
             fetch_cal_btn = st.button(
-                f"선택된 {len(saved_comp_df)}개사 가격 캘린더 수집 (API {len(saved_comp_df)}회 소모)",
+                f"선택된 {len(saved_comp_df)}개사 가격 캘린더 일괄 수집 (1·2·4인 기준 / API {len(saved_comp_df) * 3}회 소모)",
                 type="primary",
                 width="stretch",
             )
@@ -810,98 +806,85 @@ with tab4:
             if not serpapi_key:
                 st.error("SerpApi 키가 설정되지 않았습니다. 로컬 `.env` 또는 클라우드 `Secrets` 설정을 확인해 주세요.")
             else:
-                with st.spinner("Google Hotels 일자별 요금 및 매진 현황을 수집 중입니다..."):
+                with st.spinner("1인 · 2인 · 4인 기준 Google Hotels 일자별 요금 및 매진 현황을 일괄 수집 중입니다..."):
                     try:
-                        snap_df = fetch_price_calendar_for_comp_set(
-                            saved_comp_df, serpapi_key, days_ahead=track_days, adults=guest_type
-                        )
+                        all_snaps = [
+                            fetch_price_calendar_for_comp_set(saved_comp_df, serpapi_key, days_ahead=track_days, adults=ad)
+                            for ad in (1, 2, 4)
+                        ]
+                        snap_df = pd.concat([d for d in all_snaps if not d.empty], ignore_index=True) if any(not d.empty for d in all_snaps) else pd.DataFrame()
                         st.session_state["latest_comp_snap"] = snap_df
-                        st.session_state["latest_comp_adults"] = guest_type
                     except Exception as e:
                         st.error(f"캘린더 수집 오류: {e}")
 
         if "latest_comp_snap" not in st.session_state or st.session_state["latest_comp_snap"].empty:
-            st.info("👆 위 파란색 **[가격 캘린더 수집]** 버튼을 누르시면 등록된 경쟁 숙소들의 평일·주말 ADR과 마감률(추정 OCC)이 즉시 계산됩니다!")
+            st.info("👆 위 파란색 **[가격 캘린더 일괄 수집]** 버튼을 누르시면 등록된 경쟁 숙소들의 **1인 · 2인 · 4인 기준** 평일·주말 ADR과 추정 OCC가 한 번에 계산됩니다!")
         else:
             snap_df = st.session_state["latest_comp_snap"]
-            captured_adults = st.session_state.get("latest_comp_adults", 1)
 
-            wd_df = snap_df[snap_df["요일구분"] == "평일(일~목)"]
-            we_df = snap_df[snap_df["요일구분"] == "주말(금·토)"]
+            st.markdown("#### 숙소별 · 인원 기준별(1인·2인·4인) ADR 및 추정 OCC 통합 비교")
+            summary_all_df = compute_per_hotel_summary(snap_df)
+            if not summary_all_df.empty:
+                st.dataframe(
+                    summary_all_df.style.format({"평일 ADR(원)": "{:,.0f}", "주말 ADR(원)": "{:,.0f}", "평일 추정 OCC(%)": "{:.1f}%", "주말 추정 OCC(%)": "{:.1f}%"}, na_rep="-"),
+                    width="stretch",
+                    hide_index=True,
+                )
 
-            wd_valid = wd_df["노출판매가(원)"].dropna()
-            we_valid = we_df["노출판매가(원)"].dropna()
+            def _calc_metrics(df_sub: pd.DataFrame) -> tuple[float, float, float, float, bool]:
+                wd = df_sub[df_sub["요일구분"] == "평일(일~목)"]
+                we = df_sub[df_sub["요일구분"] == "주말(금·토)"]
+                wd_v = wd["노출판매가(원)"].dropna()
+                we_v = we["노출판매가(원)"].dropna()
+                wd_a = float(wd_v.mean()) if not wd_v.empty else 0.0
+                we_a = float(we_v.mean()) if not we_v.empty else (wd_a * 1.35 if wd_a > 0 else 0.0)
+                wd_o = float((wd["예약상태"] == "마감/미노출").mean() * 100.0) if not wd.empty else 70.0
+                we_o = float((we["예약상태"] == "마감/미노출").mean() * 100.0) if not we.empty else 85.0
+                return wd_a, we_a, wd_o, we_o, we_v.empty and wd_a > 0
 
-            wd_adr = float(wd_valid.mean()) if not wd_valid.empty else 0.0
-            we_adr = float(we_valid.mean()) if not we_valid.empty else (wd_adr * 1.35 if wd_adr > 0 else 0.0)
-            wd_occ = float((wd_df["예약상태"] == "마감/미노출").mean() * 100.0) if not wd_df.empty else 70.0
-            we_occ = float((we_df["예약상태"] == "마감/미노출").mean() * 100.0) if not we_df.empty else 85.0
-
-            s1, s2, s3, s4 = st.columns(4)
-            s1.metric("전체 평균 평일(일~목) ADR", f"{wd_adr:,.0f} 원")
-            s2.metric("전체 평균 주말(금·토) ADR", f"{we_adr:,.0f} 원" + (" (추정)" if we_valid.empty and wd_adr > 0 else ""))
-            s3.metric("전체 평균 평일 마감률 (추정 OCC)", f"{wd_occ:.1f} %")
-            s4.metric("전체 평균 주말 마감률 (추정 OCC)", f"{we_occ:.1f} %")
-
-            # 숙소별 개별 ADR / OCC 산출 테이블
-            st.markdown("#### 숙소별 평일 · 주말 ADR 및 추정 OCC 비교")
-            per_hotel_rows = []
-            for h_name, grp in snap_df.groupby("경쟁숙소", sort=False):
-                h_wd = grp[grp["요일구분"] == "평일(일~목)"]
-                h_we = grp[grp["요일구분"] == "주말(금·토)"]
-                h_wd_valid = h_wd["노출판매가(원)"].dropna()
-                h_we_valid = h_we["노출판매가(원)"].dropna()
-                h_wd_adr = float(h_wd_valid.mean()) if not h_wd_valid.empty else 0.0
-                h_we_adr = float(h_we_valid.mean()) if not h_we_valid.empty else (h_wd_adr * 1.35 if h_wd_adr > 0 else 0.0)
-                h_wd_occ = float((h_wd["예약상태"] == "마감/미노출").mean() * 100.0) if not h_wd.empty else 0.0
-                h_we_occ = float((h_we["예약상태"] == "마감/미노출").mean() * 100.0) if not h_we.empty else 0.0
-                open_cnt = int(grp["노출판매가(원)"].notna().sum())
-                per_hotel_rows.append({
-                    "경쟁숙소": h_name,
-                    "평일 ADR(원)": round(h_wd_adr) if h_wd_adr > 0 else None,
-                    "주말 ADR(원)": round(h_we_adr) if h_we_adr > 0 else None,
-                    "평일 추정 OCC(%)": round(h_wd_occ, 1),
-                    "주말 추정 OCC(%)": round(h_we_occ, 1),
-                    "판매노출일수": f"{open_cnt} / {len(grp)}일",
-                    "_wd_adr": h_wd_adr,
-                    "_we_adr": h_we_adr,
-                    "_wd_occ": h_wd_occ,
-                    "_we_occ": h_we_occ,
-                })
-            per_hotel_df = pd.DataFrame(per_hotel_rows)
-            disp_per_df = per_hotel_df[["경쟁숙소", "평일 ADR(원)", "주말 ADR(원)", "평일 추정 OCC(%)", "주말 추정 OCC(%)", "판매노출일수"]]
-            st.dataframe(
-                disp_per_df.style.format({"평일 ADR(원)": "{:,.0f}", "주말 ADR(원)": "{:,.0f}", "평일 추정 OCC(%)": "{:.1f}%", "주말 추정 OCC(%)": "{:.1f}%"}, na_rep="-"),
-                width="stretch",
-                hide_index=True,
-            )
-
-            target_label = "도미토리(1인)" if captured_adults == 1 else "프라이빗룸(2인)"
-            apply_options = ["전체 Comp Set 평균"] + [r["경쟁숙소"] for r in per_hotel_rows if r["_wd_adr"] > 0]
+            # 5번 시뮬레이터 원클릭 반영 (1인->도미토리, 2인->프라이빗룸 동시 반영)
+            hotel_names_list = snap_df["경쟁숙소"].dropna().unique().tolist()
+            apply_options = ["전체 Comp Set 평균"] + hotel_names_list
             app_c1, app_c2 = st.columns([1.5, 2.5])
             apply_source = app_c1.selectbox("5번 시뮬레이터 반영 기준", options=apply_options, key="comp_apply_source")
             with app_c2:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button(f"📌 [{apply_source}] 기준을 [5번 시뮬레이터 → {target_label}]에 즉시 반영", width="stretch"):
-                    if apply_source == "전체 Comp Set 평균":
-                        sel_wd_adr, sel_we_adr, sel_wd_occ, sel_we_occ = wd_adr, we_adr, wd_occ, we_occ
+                if st.button(f"📌 [{apply_source}]의 1인(도미토리)·2인(프라이빗룸) 단가/OCC를 5번 시뮬레이터에 즉시 반영", width="stretch"):
+                    src_df = snap_df if apply_source == "전체 Comp Set 평균" else snap_df[snap_df["경쟁숙소"] == apply_source]
+                    applied_parts = []
+                    for ad_cnt, prefix, label in [(1, "sim_dorm", "도미토리(1인)"), (2, "sim_priv", "프라이빗룸(2인)")]:
+                        sub_ad = src_df[src_df["기준인원"] == ad_cnt] if "기준인원" in src_df.columns else pd.DataFrame()
+                        if not sub_ad.empty:
+                            a_wd, a_we, o_wd, o_we, _ = _calc_metrics(sub_ad)
+                            if a_wd > 0:
+                                st.session_state[f"{prefix}_wd_adr"] = int(round(a_wd, -2))
+                                st.session_state[f"{prefix}_we_adr"] = int(round(a_we, -2))
+                                st.session_state[f"{prefix}_wd_occ"] = int(min(98, max(30, round(o_wd))))
+                                st.session_state[f"{prefix}_we_occ"] = int(min(98, max(30, round(o_we))))
+                                applied_parts.append(label)
+                    if applied_parts:
+                        st.success(f"[{apply_source}]의 {', '.join(applied_parts)} 단가·가동률이 5번 탭에 반영되었습니다.")
                     else:
-                        picked = next(r for r in per_hotel_rows if r["경쟁숙소"] == apply_source)
-                        sel_wd_adr, sel_we_adr, sel_wd_occ, sel_we_occ = picked["_wd_adr"], picked["_we_adr"], picked["_wd_occ"], picked["_we_occ"]
+                        st.warning("반영할 수 있는 유효 판매가 데이터가 없습니다.")
 
-                    if sel_wd_adr > 0:
-                        prefix = "sim_dorm" if captured_adults == 1 else "sim_priv"
-                        st.session_state[f"{prefix}_wd_adr"] = int(round(sel_wd_adr, -2))
-                        st.session_state[f"{prefix}_we_adr"] = int(round(sel_we_adr, -2))
-                        st.session_state[f"{prefix}_wd_occ"] = int(min(98, max(30, round(sel_wd_occ))))
-                        st.session_state[f"{prefix}_we_occ"] = int(min(98, max(30, round(sel_we_occ))))
-                        st.success(f"[{apply_source}]의 {target_label} 평일·주말 단가 및 가동률이 5번 탭에 반영되었습니다.")
+            # 1인 / 2인 / 4인 상세 탭 3개 기본 표시
+            ad_tab1, ad_tab2, ad_tab4 = st.tabs(["1인 기준 (도미토리 베드)", "2인 기준 (더블룸)", "4인 기준 (패밀리/그룹)"])
+            for ad_cnt, ad_tab in [(1, ad_tab1), (2, ad_tab2), (4, ad_tab4)]:
+                with ad_tab:
+                    sub_df = snap_df[snap_df["기준인원"] == ad_cnt] if "기준인원" in snap_df.columns else snap_df
+                    if sub_df.empty:
+                        st.info(f"{ad_cnt}인 기준 수집 데이터가 없습니다. 위 일괄 수집 버튼을 다시 눌러주세요.")
                     else:
-                        st.warning("선택한 기준의 평일 유효 판매가가 없어 반영할 수 없습니다.")
+                        m_wd_a, m_we_a, m_wd_o, m_we_o, is_est = _calc_metrics(sub_df)
+                        s1, s2, s3, s4 = st.columns(4)
+                        s1.metric(f"{ad_cnt}인 평일(일~목) ADR", f"{m_wd_a:,.0f} 원")
+                        s2.metric(f"{ad_cnt}인 주말(금·토) ADR", f"{m_we_a:,.0f} 원" + (" (추정)" if is_est else ""))
+                        s3.metric(f"{ad_cnt}인 평일 마감률 (추정 OCC)", f"{m_wd_o:.1f} %")
+                        s4.metric(f"{ad_cnt}인 주말 마감률 (추정 OCC)", f"{m_we_o:.1f} %")
 
-            st.markdown("#### 체크인 일자별 판매가 매트릭스 (원)")
-            pivot_df = snap_df.pivot(index="체크인일자", columns="경쟁숙소", values="노출판매가(원)")
-            st.dataframe(pivot_df.style.format("{:,.0f}", na_rep="마감/미노출"), width="stretch")
+                        st.markdown(f"##### {ad_cnt}인 기준 체크인 일자별 판매가 매트릭스 (원)")
+                        piv = sub_df.pivot(index="체크인일자", columns="경쟁숙소", values="노출판매가(원)")
+                        st.dataframe(piv.style.format("{:,.0f}", na_rep="마감/미노출"), width="stretch")
 
         with st.expander("📂 로컬 DB 누적 스냅샷 히스토리 (최근 30일)"):
             hist_df = load_historical_snapshots(30)

@@ -5,11 +5,14 @@ import pandas as pd
 
 
 def compute_per_hotel_summary(snap_df: pd.DataFrame) -> pd.DataFrame:
-    """가격 캘린더 스냅샷에서 숙소별 평일·주말 ADR과 추정 OCC 요약 표를 생성합니다."""
+    """가격 캘린더 스냅샷에서 숙소별·기준인원별 평일·주말 ADR과 추정 OCC 요약 표를 생성합니다."""
     if snap_df is None or snap_df.empty:
         return pd.DataFrame()
+    group_cols = ["경쟁숙소", "기준인원"] if "기준인원" in snap_df.columns else ["경쟁숙소"]
     rows = []
-    for h_name, grp in snap_df.groupby("경쟁숙소", sort=False):
+    for keys, grp in snap_df.groupby(group_cols, sort=False):
+        h_name = keys[0] if isinstance(keys, tuple) else keys
+        adults_val = keys[1] if isinstance(keys, tuple) and len(keys) > 1 else None
         h_wd = grp[grp["요일구분"] == "평일(일~목)"]
         h_we = grp[grp["요일구분"] == "주말(금·토)"]
         h_wd_valid = h_wd["노출판매가(원)"].dropna()
@@ -19,14 +22,17 @@ def compute_per_hotel_summary(snap_df: pd.DataFrame) -> pd.DataFrame:
         h_wd_occ = float((h_wd["예약상태"] == "마감/미노출").mean() * 100.0) if not h_wd.empty else 0.0
         h_we_occ = float((h_we["예약상태"] == "마감/미노출").mean() * 100.0) if not h_we.empty else 0.0
         open_cnt = int(grp["노출판매가(원)"].notna().sum())
-        rows.append({
-            "경쟁숙소": h_name,
+        row_dict = {"경쟁숙소": h_name}
+        if adults_val is not None:
+            row_dict["기준인원"] = f"{int(adults_val)}인 기준"
+        row_dict.update({
             "평일 ADR(원)": round(h_wd_adr) if h_wd_adr > 0 else None,
             "주말 ADR(원)": round(h_we_adr) if h_we_adr > 0 else None,
             "평일 추정 OCC(%)": round(h_wd_occ, 1),
             "주말 추정 OCC(%)": round(h_we_occ, 1),
             "판매노출일수": f"{open_cnt} / {len(grp)}일",
         })
+        rows.append(row_dict)
     return pd.DataFrame(rows)
 
 
